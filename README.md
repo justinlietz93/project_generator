@@ -254,7 +254,7 @@ python -m project_maker.orchestrator --walkthrough game_design --model claude37s
 
 **Model Selection**:
 - Different models have different capabilities and token limits
-- Claude-3-Opus and GPT-4 generally provide the best results for complex projects
+- Claude-3.7-sonnet-thinking and Deepseek R1 or other reasoning models generally provide the best results for complex projects
 
 ## Contributing
 
