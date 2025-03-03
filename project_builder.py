@@ -39,6 +39,9 @@ TOKEN_SAFETY_THRESHOLD = 12000  # Reduced to avoid rate limits
 # Project directory where all files will be created
 PROJECT_DIR = "generated_project"
 
+# Add a flag to control linting (enabled by default)
+ENABLE_SYNTAX_CHECKING = True
+
 # Define the project building steps with substeps
 BUILDER_STEPS = [
     {
@@ -730,7 +733,7 @@ def execute_substep(orchestrator: AIOrchestrator, step_info: dict, step_index: i
     # Set max output tokens based on the step
     # For file implementation (step 5), use the highest possible value
     # For other steps, use a more moderate value
-    max_output_tokens = 128000 if step_index == 5 else 64000
+    max_output_tokens = 64000  # Maximum allowed for Claude models
     print(f"Setting max output tokens to {max_output_tokens} for {'file implementation' if step_index == 5 else 'regular step'}")
     
     # Use temperature 0.0 for file implementation (step 5) for deterministic output
@@ -1199,15 +1202,16 @@ def discover_all_files(directory: str) -> List[str]:
     
     return all_files
 
-def run_project_builder(vision: str, model_name: str, start_step: int = 1, start_substep: str = None):
-    """Run the main project builder workflow with substeps.
+def run_project_builder(vision: str, model_name: str, start_step: int = 1, start_substep: str = None, run_syntax_check_only: bool = False):
+    """Run the project builder process."""
     
-    Args:
-        vision: The project vision statement
-        model_name: The AI model to use
-        start_step: Which step to start from (default: 1)
-        start_substep: Which sub-step to start from (default: None = first substep)
-    """
+    # Just run syntax checking if specified
+    if run_syntax_check_only:
+        print("Running syntax check on existing project...")
+        syntax_errors = run_syntax_check(PROJECT_DIR)
+        return
+    
+    # Continue with normal project building
     print("\n=== Project Builder ===")
     print(f"Using model: {model_name}")
     
@@ -1293,7 +1297,27 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                     print(f"\n=== File Implementation ===")
                     print(f"Implementing {len(implementation_files)} files in priority order...")
                     
-                    for idx, file_path in enumerate(implementation_files):
+                    # Create a progress tracking file to support crash recovery
+                    progress_file = os.path.join(PROJECT_DIR, "doc", "implementation_progress.json")
+                    completed_files = []
+                    
+                    # Load previously completed files if the progress file exists
+                    if os.path.exists(progress_file):
+                        try:
+                            with open(progress_file, 'r') as f:
+                                completed_files = json.load(f)
+                                print(f"Found {len(completed_files)} previously completed files.")
+                        except Exception as e:
+                            print(f"Error loading progress file: {e}")
+                            completed_files = []
+                    
+                    # Filter out already completed files
+                    files_to_implement = [f for f in implementation_files if f not in completed_files]
+                    if len(files_to_implement) < len(implementation_files):
+                        print(f"Skipping {len(implementation_files) - len(files_to_implement)} already implemented files.")
+                    
+                    for idx, file_path in enumerate(files_to_implement):
+                        print(f"\nImplementing file {idx+1}/{len(files_to_implement)}: {file_path}")
                         # Use our implementation method
                         success = implement_single_file(
                             file_path, 
@@ -1304,13 +1328,35 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                             file_map
                         )
                         
-                        print(f"Progress: {idx+1}/{len(implementation_files)} files completed")
+                        if success:
+                            # Add to completed files and save progress after each successful implementation
+                            completed_files.append(file_path)
+                            try:
+                                # Ensure the doc directory exists
+                                os.makedirs(os.path.join(PROJECT_DIR, "doc"), exist_ok=True)
+                                # Save progress
+                                with open(progress_file, 'w') as f:
+                                    json.dump(completed_files, f)
+                            except Exception as e:
+                                print(f"Warning: Could not save progress: {e}")
+                        
+                        print(f"Progress: {len(completed_files)}/{len(implementation_files)} files completed")
                     
-                    step_outputs[i] = f"Implemented {len(implementation_files)} files"
+                    step_outputs[i] = f"Implemented {len(completed_files)} files"
                     using_generated_structure = True
                 
             elif i == 6:  # Assembly and Usage Guide
                 print("\n=== Generating Assembly and Usage Guide ===")
+                
+                # Run syntax check on implemented files if enabled
+                if ENABLE_SYNTAX_CHECKING:
+                    syntax_errors = run_syntax_check(PROJECT_DIR)
+                    if syntax_errors:
+                        print("\nWarning: Syntax errors were found in some files.")
+                        user_choice = input("Do you want to continue with documentation generation? (y/n): ")
+                        if user_choice.lower() != 'y':
+                            print("Documentation generation aborted. Please fix the syntax errors.")
+                            continue
                 
                 # Create the README.md and other documentation
                 readme_prompt = f"""
@@ -1436,7 +1482,27 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                 
                 print(f"Implementing {len(implementation_files)} files in priority order...")
                 
-                for idx, file_path in enumerate(implementation_files):
+                # Create a progress tracking file to support crash recovery
+                progress_file = os.path.join(PROJECT_DIR, "doc", "implementation_progress.json")
+                completed_files = []
+                
+                # Load previously completed files if the progress file exists
+                if os.path.exists(progress_file):
+                    try:
+                        with open(progress_file, 'r') as f:
+                            completed_files = json.load(f)
+                            print(f"Found {len(completed_files)} previously completed files.")
+                    except Exception as e:
+                        print(f"Error loading progress file: {e}")
+                        completed_files = []
+                
+                # Filter out already completed files
+                files_to_implement = [f for f in implementation_files if f not in completed_files]
+                if len(files_to_implement) < len(implementation_files):
+                    print(f"Skipping {len(implementation_files) - len(files_to_implement)} already implemented files.")
+                
+                for idx, file_path in enumerate(files_to_implement):
+                    print(f"\nImplementing file {idx+1}/{len(files_to_implement)}: {file_path}")
                     # Use our implementation method
                     success = implement_single_file(
                         file_path, 
@@ -1447,7 +1513,22 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                         file_map
                     )
                     
-                    print(f"Progress: {idx+1}/{len(implementation_files)} files completed")
+                    if success:
+                        # Add to completed files and save progress after each successful implementation
+                        completed_files.append(file_path)
+                        try:
+                            # Ensure the doc directory exists
+                            os.makedirs(os.path.join(PROJECT_DIR, "doc"), exist_ok=True)
+                            # Save progress
+                            with open(progress_file, 'w') as f:
+                                json.dump(completed_files, f)
+                        except Exception as e:
+                            print(f"Warning: Could not save progress: {e}")
+                    
+                    print(f"Progress: {len(completed_files)}/{len(implementation_files)} files completed")
+                
+                step_outputs[i] = f"Implemented {len(completed_files)} files"
+                using_generated_structure = True
     
     # Store the overall implementation output
     output_summary = f"# Project Implementation Summary\n\n"
@@ -1479,6 +1560,24 @@ def implement_single_file(file_path: str, structure_content: str, step_outputs: 
         bool: True if implementation was successful, False otherwise
     """
     print(f"\nImplementing file: {file_path}")
+    
+    # Check if the file already exists from a previous run - support for crash recovery
+    full_file_path = os.path.join(PROJECT_DIR, file_path)
+    if os.path.exists(full_file_path):
+        file_size = os.path.getsize(full_file_path)
+        if file_size > 0:  # Only consider non-empty files as successfully implemented
+            print(f"File {file_path} already exists ({file_size} bytes). Skipping implementation.")
+            
+            # We need to add it to the file_map to ensure consistency
+            with open(full_file_path, 'r', encoding='utf-8') as f:
+                try:
+                    content = f.read()
+                    file_map[file_path] = ProjectFile(file_path, content)
+                    return True
+                except Exception as e:
+                    print(f"Error reading existing file {file_path}: {e}")
+                    print("Will re-implement this file.")
+                    # Continue with implementation if reading fails
     
     # Build focused context for this file
     file_prompt = f"""# File Implementation: {file_path}
@@ -1551,7 +1650,7 @@ Output your implementation in `=== File: {file_path} ===`"""
         
         # Drastically increase the max_tokens to ensure complete file generation
         # This doesn't affect input token limits, only allows more output
-        max_output_tokens = 128000  # Set to maximum possible value
+        max_output_tokens = 64000  # Maximum allowed for Claude models
         print(f"Setting max output tokens to {max_output_tokens} for file implementation")
         
         # Use temperature 0.0 for file implementation for deterministic code generation
@@ -1575,4 +1674,164 @@ Output your implementation in `=== File: {file_path} ===`"""
         return True
     except Exception as e:
         print(f"❌ Failed to implement {file_path}: {str(e)}")
-        return False 
+        return False
+
+def run_syntax_check(directory: str) -> Dict[str, List[str]]:
+    """
+    Run syntax linters on the implemented project files based on their extensions.
+    
+    Args:
+        directory: The root directory of the project
+        
+    Returns:
+        Dict[str, List[str]]: Dictionary mapping file paths to lists of syntax errors
+    """
+    print("\n=== Running Syntax Check ===")
+    errors = {}
+    
+    # Get all files recursively
+    all_files = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            # Skip hidden files and directories
+            if file.startswith('.') or '/.' in root or '\\.' in root:
+                continue
+            # Skip the doc directory
+            if 'doc' in root.split(os.path.sep):
+                continue
+            
+            file_path = os.path.join(root, file)
+            all_files.append(file_path)
+    
+    print(f"Found {len(all_files)} files to check for syntax errors")
+    
+    # Check Python files
+    python_files = [f for f in all_files if f.endswith('.py')]
+    if python_files:
+        print(f"Checking {len(python_files)} Python files...")
+        for py_file in python_files:
+            rel_path = os.path.relpath(py_file, directory)
+            try:
+                # Use Python's built-in compile function to check syntax
+                with open(py_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                try:
+                    compile(content, py_file, 'exec')
+                except SyntaxError as e:
+                    if rel_path not in errors:
+                        errors[rel_path] = []
+                    errors[rel_path].append(f"Line {e.lineno}: {e.msg}")
+            except Exception as e:
+                if rel_path not in errors:
+                    errors[rel_path] = []
+                errors[rel_path].append(f"Error reading file: {str(e)}")
+    
+    # Check JavaScript files
+    js_files = [f for f in all_files if f.endswith('.js')]
+    if js_files:
+        print(f"Checking {len(js_files)} JavaScript files...")
+        for js_file in js_files:
+            rel_path = os.path.relpath(js_file, directory)
+            try:
+                # Use Node.js to check syntax if available
+                result = subprocess.run(
+                    ['node', '--check', js_file], 
+                    capture_output=True, 
+                    text=True
+                )
+                if result.returncode != 0:
+                    if rel_path not in errors:
+                        errors[rel_path] = []
+                    errors[rel_path].extend(result.stderr.splitlines())
+            except Exception as e:
+                # Node.js might not be available, skip with a warning
+                print(f"Warning: Could not check JavaScript syntax for {rel_path}: {str(e)}")
+    
+    # Check JSON files
+    json_files = [f for f in all_files if f.endswith('.json')]
+    if json_files:
+        print(f"Checking {len(json_files)} JSON files...")
+        for json_file in json_files:
+            rel_path = os.path.relpath(json_file, directory)
+            try:
+                # Use Python's json module to validate JSON
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    json.load(f)
+            except json.JSONDecodeError as e:
+                if rel_path not in errors:
+                    errors[rel_path] = []
+                errors[rel_path].append(f"Line {e.lineno}: {e.msg}")
+            except Exception as e:
+                if rel_path not in errors:
+                    errors[rel_path] = []
+                errors[rel_path].append(f"Error reading file: {str(e)}")
+    
+    # Check HTML files (basic validation)
+    html_files = [f for f in all_files if f.endswith(('.html', '.htm'))]
+    if html_files:
+        print(f"Checking {len(html_files)} HTML files...")
+        try:
+            # Try to import html.parser for basic validation
+            from html.parser import HTMLParser
+            
+            class ValidatingHTMLParser(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.errors = []
+                
+                def error(self, message):
+                    self.errors.append(message)
+                    
+            for html_file in html_files:
+                rel_path = os.path.relpath(html_file, directory)
+                try:
+                    with open(html_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    parser = ValidatingHTMLParser()
+                    parser.feed(content)
+                    
+                    if parser.errors:
+                        if rel_path not in errors:
+                            errors[rel_path] = []
+                        errors[rel_path].extend(parser.errors)
+                except Exception as e:
+                    if rel_path not in errors:
+                        errors[rel_path] = []
+                    errors[rel_path].append(f"Error checking HTML: {str(e)}")
+        except ImportError:
+            print("Warning: HTML parser not available, skipping HTML validation")
+    
+    # Check CSS files (basic validation)
+    css_files = [f for f in all_files if f.endswith('.css')]
+    if css_files:
+        print(f"Checking {len(css_files)} CSS files...")
+        for css_file in css_files:
+            rel_path = os.path.relpath(css_file, directory)
+            try:
+                # Basic CSS syntax check (opening/closing braces)
+                with open(css_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Simple check for balanced braces
+                if content.count('{') != content.count('}'):
+                    if rel_path not in errors:
+                        errors[rel_path] = []
+                    errors[rel_path].append("Unbalanced braces in CSS file")
+            except Exception as e:
+                if rel_path not in errors:
+                    errors[rel_path] = []
+                errors[rel_path].append(f"Error reading file: {str(e)}")
+    
+    # Print summary
+    if errors:
+        print(f"\n❌ Found syntax errors in {len(errors)} files:")
+        for file_path, file_errors in errors.items():
+            print(f"\n{file_path}:")
+            for error in file_errors:
+                print(f"  - {error}")
+    else:
+        print("\n✅ No syntax errors found in the implemented files")
+    
+    return errors 

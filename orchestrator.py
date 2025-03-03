@@ -374,6 +374,8 @@ This ensures cross-platform compatibility.""")
     parser.add_argument('--workflow', type=str, help='Run a custom LLM workflow (e.g., book_writer, game_design)')
     parser.add_argument('--start-step', type=int, default=1, help='Step number to start from (1-based)')
     parser.add_argument('--start-substep', type=str, help='Substep ID to start from (e.g. "B")')
+    parser.add_argument('--syntax-check', action='store_true', help='Run syntax checking on the generated project files')
+    parser.add_argument('--disable-syntax-check', action='store_true', help='Disable automatic syntax checking during build')
     parser.add_argument('model', choices=['claude37sonnet', 'deepseekr1'], 
                       help='Which LLM to use (claude37sonnet or deepseekr1)')
     parser.add_argument('domain', nargs='?', default=None, 
@@ -401,7 +403,22 @@ This ensures cross-platform compatibility.""")
         return
     elif build_mode:
         # Run the Project Builder
-        run_project_builder(model_name, user_vision, auto_yes, start_step, start_substep)
+        print("Running Project Builder...")
+        from project_builder import run_project_builder
+        
+        # Set the global syntax checking flag based on command line args
+        if args.disable_syntax_check:
+            print("Automatic syntax checking disabled")
+            from project_builder import ENABLE_SYNTAX_CHECKING
+            ENABLE_SYNTAX_CHECKING = False
+            
+        # Run just the syntax checker if requested
+        if args.syntax_check:
+            print("Running syntax check on generated project...")
+            run_project_builder(vision=None, model_name=args.model, run_syntax_check_only=True)
+        else:
+            run_project_builder(vision=args.domain, model_name=args.model, 
+                           start_step=args.start_step, start_substep=args.start_substep)
         return
     elif research_mode:
         # Run the Deep Research process

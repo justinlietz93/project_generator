@@ -8,3 +8,10 @@ some_project/*
 improvments.txt
 extended_functionality
 generated_project/*
+.pycache/*
+__pycache__/*
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
