@@ -34,7 +34,7 @@ from ai_clients import AIOrchestrator
 from utils import ProjectFile, SubStep, read_project_files, write_project_file, parse_ai_response_and_apply
 
 # Global token management
-TOKEN_SAFETY_THRESHOLD = 12000  # Reduced from 15000 to avoid rate limits
+TOKEN_SAFETY_THRESHOLD = 12000  # Reduced to avoid rate limits
 
 # Project directory where all files will be created
 PROJECT_DIR = "generated_project"
@@ -727,8 +727,19 @@ def execute_substep(orchestrator: AIOrchestrator, step_info: dict, step_index: i
         print("Adding delay before API call to manage rate limits...")
         time.sleep(5)  # 5 second delay between API calls
     
+    # Set max output tokens based on the step
+    # For file implementation (step 5), use the highest possible value
+    # For other steps, use a more moderate value
+    max_output_tokens = 128000 if step_index == 5 else 64000
+    print(f"Setting max output tokens to {max_output_tokens} for {'file implementation' if step_index == 5 else 'regular step'}")
+    
+    # Use temperature 0.0 for file implementation (step 5) for deterministic output
+    # For other steps, use a moderate temperature for more creativity
+    temperature = 0.0 if step_index == 5 else 0.2
+    print(f"Using temperature {temperature} for {'file implementation' if step_index == 5 else 'regular step'}")
+    
     # Call the AI with the focused prompt
-    ai_response = orchestrator.call_llm(system_prompt, prompt, max_tokens=64000, temperature=0.2)
+    ai_response = orchestrator.call_llm(system_prompt, prompt, max_tokens=max_output_tokens, temperature=temperature)
     
     if not ai_response or ai_response.startswith("ERROR"):
         print(f"Error in substep {sub_step.id}: {ai_response}")
@@ -1537,7 +1548,17 @@ Output your implementation in `=== File: {file_path} ===`"""
     try:
         # Call the LLM to implement this file
         system_prompt = "You are an expert software engineer implementing a critical file in a complex project."
-        ai_response = orchestrator.call_llm(system_prompt, file_prompt, max_tokens=8000, temperature=0.2)
+        
+        # Drastically increase the max_tokens to ensure complete file generation
+        # This doesn't affect input token limits, only allows more output
+        max_output_tokens = 128000  # Set to maximum possible value
+        print(f"Setting max output tokens to {max_output_tokens} for file implementation")
+        
+        # Use temperature 0.0 for file implementation for deterministic code generation
+        temperature = 0.0
+        print(f"Using temperature {temperature} for precise code generation")
+        
+        ai_response = orchestrator.call_llm(system_prompt, file_prompt, max_tokens=max_output_tokens, temperature=temperature)
         
         if not ai_response or ai_response.startswith("ERROR"):
             print(f"Error implementing {file_path}: {ai_response}")
