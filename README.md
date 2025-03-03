@@ -1,244 +1,267 @@
-# AI Project Builder & Research Proposal Framework
+# LLM Project Maker
 
-This project implements two main functionalities:
-1. An AI-powered project builder that systematically creates complete software projects from high-level descriptions
-2. An AI research proposal generator that creates formal academic research proposals from project documentation
+A versatile AI orchestration framework for building complete projects, conducting deep research, generating proposals, and more using Large Language Models.
+
+```
+ _     _     __  __   ____            _           _     __  __       _
+| |   | |   |  \/  | |  _ \ _ __ ___ (_) ___  ___| |_  |  \/  | __ _| | _____ _ __
+| |   | |   | |\/| | | |_) | '__/ _ \| |/ _ \/ __| __| | |\/| |/ _` | |/ / _ \ '__|
+| |___| |___| |  | | |  __/| | | (_) | |  __/ (__| |_  | |  | | (_| |   <  __/ |
+|_____|_____|_|  |_| |_|   |_|  \___// |\___|\___|\__| |_|  |_|\__,_|_|\_\___|_|
+                                   |__/
+```
+
+## ![Highlights](https://img.shields.io/badge/HIGHLIGHTS-Features-blue)
+
+- **Generate Entire Projects With One Prompt**: Create complete project codebases from a single description. No need to write code file by file - get an entire working project structure with implementation.
+- **Deep Research Capabilities**: Conduct structured, citation-backed research that exceeds OpenAI's depth with detailed reasoning and analysis.
+- **Custom LLM Workflows**: Design your own multi-step LLM workflows with configurable templates for any domain.
+- **AI Proposal Generator**: Generate professional proposals based on project requirements and documentation.
+
+### ![Functions](https://img.shields.io/badge/KEY-Functions-green)
+
+- **Project Builder**: `python -m project_maker.orchestrator --build` - Generate complete, working projects from a single prompt
+- **Deep Research**: `python -m project_maker.orchestrator --research` - Superior research capabilities with structured methodology beyond what OpenAI provides
+- **AI Proposal Generator**: `python -m project_maker.ai_proposal_generator` - Create professional, publication-ready proposals
+- **Custom Workflows**: `python -m project_maker.orchestrator --walkthrough [template]` - Run specialized LLM workflows
+- **Training Data Generator**: `python -m project_maker.training_data_generator` - Create datasets for model fine-tuning
+
+### ![Research](https://img.shields.io/badge/ADVANCED-Research-red)
+
+- **Structured multi-step methodology** versus single-prompt responses
+- **Citation tracking** with proper academic referencing
+- **Counter-argument analysis** for balanced perspective
+- **Self-critique** and validation steps built into the process
+- **Deeper domain expertise** through focused context retrieval
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Installation](#installation)
+- [Components](#components)
+  - [Project Builder](#project-builder)
+  - [Deep Research](#deep-research)
+  - [AI Proposal Generator](#ai-proposal-generator)
+  - [LLM Walkthrough Template](#llm-walkthrough-template)
+  - [Training Data Generator](#training-data-generator)
+- [Configuration](#configuration)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
 
 ## Overview
 
-The Project Builder is designed to:
-1. Take a user's project description/requirements
-2. Plan and design the project architecture
-3. Create a complete project structure with folders and files
-4. Implement each file with appropriate code
-5. Provide comprehensive assembly instructions and usage guidance
+This framework provides a comprehensive set of tools for working with Large Language Models (LLMs) to accomplish complex tasks through structured workflows. The system orchestrates multi-step processes, manages context and token limits, and provides specialized templates for different use cases.
 
-## Core Components
+Key features:
+- **Project Builder**: Generate complete, working project codebases from a simple description
+- **Deep Research**: Conduct in-depth research on topics with structured documentation
+- **AI Proposal Generator**: Create professional proposals based on project requirements
+- **Customizable Workflows**: Define your own LLM-powered workflows with templates
+- **Training Data Generation**: Generate training data for fine-tuning language models
 
-The system consists of several key modules:
+## Installation
 
-1. **Project Builder (`project_builder.py`)**: The main module that implements the project building workflow
-2. **AI Proposal Generator (`ai_proposal_generator.py`)**: Generates formal academic research proposals
-3. **AI Orchestrator (`ai_clients.py`)**: Handles interactions with the LLM models (Claude 3.7 Sonnet or DeepSeek)
-4. **Utility Functions (`utils.py`)**: Provides shared functionality for file operations and response parsing
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/project_maker.git
+   cd project_maker
+   ```
 
-## Project Building Process
+2. Set up a virtual environment:
+   ```bash
+   python -m venv .venv
+   # On Windows
+   .\.venv\Scripts\activate
+   # On Linux/Mac
+   source .venv/bin/activate
+   ```
 
-The system follows a structured 6-phase approach:
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 1. Project Planning
-- **Sub-Step A**: Project Overview
-  - Vision Summary
-  - Project Objectives
-  - Expected Outcomes
+4. Set up API keys (create a `.env` file in the project root):
+   ```
+   OPENAI_API_KEY=your_openai_key_here
+   ANTHROPIC_API_KEY=your_anthropic_key_here
+   ```
 
-- **Sub-Step B**: Technology Stack
-  - Core Technologies
-  - Supporting Libraries
-  - Development Tools
+## Components
 
-- **Sub-Step C**: Project Structure
-  - Directory organization
-  - Key files and purposes
-  - Module organization
-  - Naming conventions
+### Project Builder
 
-### 2. System Architecture
-- **Sub-Step A**: Component Architecture
-  - Major system components
-  - Component responsibilities
-  - Component interactions
-  - Architectural patterns
+The Project Builder is the core component, designed to create complete, working projects from a simple description. It follows a structured, multi-step approach:
 
-- **Sub-Step B**: Data Architecture
-  - Data models and schemas
-  - Data flow between components
-  - Storage solutions
-  - Security considerations
+1. Project Planning
+2. System Architecture
+3. Project Structure
+4. Implementation Plan
+5. File Implementation
+6. Assembly and Usage Guide
 
-- **Sub-Step C**: Interface Design
-  - API contracts
-  - Communication protocols
-  - Interface patterns
-  - Error handling
+#### How to Use Project Builder
 
-### 3. Project Structure
-- **Sub-Step A**: Directory Structure
-  - Directory hierarchy
-  - Organization patterns
-  - Future expansion considerations
-  - Build/deployment structure
-
-- **Sub-Step B**: File Templates
-  - Core file templates
-  - Naming conventions
-  - Organization rules
-  - Configuration templates
-
-- **Sub-Step C**: Build Configuration
-  - Build scripts
-  - Dependency management
-  - Development tools
-  - CI/CD templates
-
-### 4. Implementation Plan
-Creates a detailed plan for implementing the project, including:
-- File implementation order
-- Dependencies between components
-- Complexity estimates
-- Testing strategy
-
-### 5. File Implementation
-Implements each file in the project following strict requirements:
-- Production-ready code quality
-- Comprehensive error handling
-- Complete documentation
-- Security best practices
-- Testing considerations
-
-### 6. Assembly and Usage Guide
-Creates comprehensive documentation including:
-- Detailed README.md
-- Installation instructions
-- Configuration guide
-- Usage examples
-- API documentation
-- Deployment guidelines
-- Troubleshooting tips
-
-## Output Structure
-
-The Project Builder creates files in the `generated_project/` directory:
-
-```
-generated_project/
-├── doc/
-│   ├── 01_project_plan_overview.md
-│   ├── 01_project_plan_tech.md
-│   ├── 01_project_plan_structure.md
-│   ├── 02A_component_architecture.md
-│   ├── 02B_data_architecture.md
-│   ├── 02C_interface_design.md
-│   ├── 03A_directory_structure.md
-│   ├── 03B_file_templates.md
-│   ├── 03C_build_configuration.md
-│   └── 04_implementation_plan.md
-├── src/
-│   └── [Generated source files]
-└── README.md
-```
-
-## Usage
-
-### Project Builder Usage
+Run the Project Builder with a description of the project you want to create:
 
 ```bash
-python project_builder.py <model_name> "Your project description"
+python -m project_maker.orchestrator --build --model claude-3-opus-20240229 "Create a Python web application for a task management system with user authentication, task prioritization, and reminder features."
 ```
 
-Where `model_name` is either:
-- `claude37sonnet` for Claude 3.7 Sonnet
-- `deepseekr1` for DeepSeek R1
+**Command-line Arguments:**
 
-Example:
+- `--build`: Activates the project builder mode
+- `--model`: Specifies which LLM to use (options: openai, claude37sonnet, claude-3-opus-20240229, etc.)
+- `--start_step`: Optionally specify which step to start from (1-6)
+- `--start_substep`: Optionally specify which substep to start from (A, B, C, etc.)
+
+**Resuming a Build:**
+
+If your build is interrupted, you can resume from a specific step:
+
 ```bash
-python project_builder.py claude37sonnet "Create a web application for tracking personal fitness with goal setting, progress visualization, and social sharing features"
+python -m project_maker.orchestrator --build --model claude-3-opus-20240229 --start_step 4
 ```
 
-### Research Proposal Generator Usage
+**Output:**
+
+The Project Builder creates a complete project in the `generated_project` directory, including:
+- Documentation in `generated_project/doc/`
+- Source code files organized according to the planned structure
+- Configuration files, README, and other project files
+
+**Advanced Usage:**
+
+For more control over the project generation process, you can:
+1. Run individual steps manually and review outputs
+2. Edit the STEP1_SUBSTEP_1C.md file before step 4 to customize the project structure
+3. Modify configuration settings in the code for different token limits or behavior
+
+### Deep Research
+
+The Deep Research tool conducts comprehensive research on a topic using LLMs, producing structured documentation.
 
 ```bash
-python ai_proposal_generator.py --model <model_name>
+python -m project_maker.orchestrator --research --model claude-3-opus-20240229 "Explain quantum computing fundamentals and recent advancements"
 ```
 
-Where `model_name` is either:
-- `claude` for Claude 3.7 Sonnet
-- `deepseek` for DeepSeek R1
+**Command-line Arguments:**
 
-The proposal generator reads files from the `some_project/doc` folder in this order:
-1. `01_CONTEXT_CONSTRAINTS.md`
-2. `02_DIVERGENT_SOLUTIONS.md`
-3. `03_DEEP_DIVE_MECHANISMS.md`
-4. `04_SELF_CRITIQUE_SYNERGY.md`
-5. `05_BREAKTHROUGH_BLUEPRINT.md`
-6. `06_IMPLEMENTATION_PATH.md`
-7. `07_NOVELTY_CHECK.md`
-8. `08_ELABORATIONS.md`
+- `--research`: Activates the deep research mode
+- `--model`: Specifies which LLM to use
+- Research topic as the final argument
 
-The generated proposal will be saved as `ai_research_proposal.md` in the project root.
+**Output:**
 
-## Environment Setup
+Creates a structured research document with:
+- Executive summary
+- Key findings
+- Detailed analysis
+- References and sources
+- Recommendations and next steps
 
-The system requires API keys for the LLM service you choose:
+### AI Proposal Generator
 
-- For Claude 3.7 Sonnet: Set the `ANTHROPIC_API_KEY` environment variable
-- For DeepSeek R1: Set the `DEEPSEEK_API_KEY` environment variable
+The AI Proposal Generator creates professional project proposals based on existing documentation.
 
-API keys can be set in a `.env` file in the project root directory.
-
-## Key Features
-
-1. **Structured Process**: Follows a carefully designed phase-by-phase approach
-2. **Production Quality**: Enforces high standards for code and documentation
-3. **Comprehensive Context**: Each phase builds on previous decisions
-4. **Detailed Documentation**: Generates thorough documentation at every level
-5. **Security Focus**: Emphasizes security best practices throughout
-6. **Testing Consideration**: Includes testing requirements in implementation
-7. **Research Proposal Generation**: Creates formal academic research proposals from project documentation
-
-## Technical Requirements
-
-- Python 3.6+
-- Required packages: See `requirements.txt`
-
-## Cross-Platform Compatibility
-
-The system uses Python's `pathlib` for platform-independent path handling, ensuring compatibility across:
-- Windows
-- Linux
-- macOS
-
-## Example Outputs
-
-### Project Builder Output (excerpt)
-```markdown
-# Project Plan: Personal Fitness Tracker
-
-## Project Objectives
-- Create a web application for tracking personal fitness
-- Implement goal setting and progress visualization features
-- Develop social sharing capabilities
-- Ensure mobile-responsive design
-
-## Technology Stack
-- Frontend: React.js with TypeScript
-- Backend: Node.js with Express
-- Database: MongoDB
-- Authentication: JWT with OAuth
-- Visualization: D3.js
-- Hosting: Docker on AWS
+```bash
+python -m project_maker.ai_proposal_generator --model claude37sonnet
 ```
 
-### Research Proposal Output (excerpt)
-```markdown
-# NeuroCognitive Architecture (NCA): A Brain-Inspired LLM Framework
+This tool:
+1. Reads documentation from the `generated_project/doc/` directory
+2. Synthesizes a comprehensive project proposal
+3. Outputs a professional proposal document
 
-## Abstract
-This research proposal outlines a novel approach to large language model architectures 
-inspired by neurobiological principles. The NeuroCognitive Architecture (NCA) framework 
-aims to bridge the gap between artificial neural networks and biological neural 
-processing by incorporating key mechanisms from human cognition.
+### LLM Walkthrough Template
 
-## Research Objectives
-1. Develop a brain-inspired architecture for language models
-2. Implement neurobiological attention mechanisms
-3. Create a modular system for cognitive task processing
-4. Evaluate performance against existing LLM architectures
+The LLM Walkthrough Template system allows you to create custom LLM-powered workflows.
 
-## Methodology
-The research will follow a systematic approach:
-1. Literature review of neuroscience and LLM architectures
-2. Design and implementation of the NCA framework
-3. Experimental validation using standard NLP benchmarks
-4. Comparative analysis with existing architectures
+```bash
+python -m project_maker.orchestrator --walkthrough book_writer --model claude37sonnet "Write a sci-fi novel about time travel"
 ```
+
+**Available Templates:**
+
+- `book_writer`: Template for writing books or long-form content
+- `game_design`: Template for designing games with rules, mechanics, etc.
+
+To create your own template, define a configuration file in the `configs/` directory.
+
+### Training Data Generator
+
+The Training Data Generator creates synthetic training data for fine-tuning language models.
+
+```bash
+python -m project_maker.training_data_generator --model mistral-7b --output training_data/ --examples 100
+```
+
+This component can generate:
+- Question-answer pairs
+- Instruction-following examples
+- Dialogue interactions
+- Custom formats based on templates
+
+## Configuration
+
+The `configs/` directory contains configuration files for different workflows:
+
+- `book_writer_config.py`: Configuration for book writing workflow
+- `game_design_config.py`: Configuration for game design workflow
+
+Each configuration file defines:
+- Workflow steps and substeps
+- Prompts and instructions for each step
+- System prompts for different stages
+- Token management parameters
+
+To create a custom configuration:
+1. Copy an existing config file
+2. Modify the steps, substeps, and prompts
+3. Add your new config file to the `configs/` directory
+4. Use it with `--walkthrough your_config_name`
+
+## Examples
+
+### Building a Web Application
+
+```bash
+python -m project_maker.orchestrator --build --model claude-3-opus-20240229 "Create a Django web application for a blog with user authentication, comment system, and tag-based categorization."
+```
+
+### Conducting Research
+
+```bash
+python -m project_maker.orchestrator --research --model claude-3-opus-20240229 "Research the environmental impact of different types of renewable energy sources"
+```
+
+### Creating a Custom Workflow
+
+```bash
+python -m project_maker.orchestrator --walkthrough game_design --model claude37sonnet "Design a cooperative board game about space exploration"
+```
+
+## Troubleshooting
+
+**API Rate Limits**:
+- If you encounter rate limit errors, the system will automatically pause and retry
+- You can adjust TOKEN_SAFETY_THRESHOLD in project_builder.py for more conservative token usage
+
+**File Generation Issues**:
+- If files are created in the wrong location, check the paths in the script generation
+- Try rerunning with `--start_step 4` to regenerate the project structure
+
+**Model Selection**:
+- Different models have different capabilities and token limits
+- Claude-3-Opus and GPT-4 generally provide the best results for complex projects
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
