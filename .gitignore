@@ -1,0 +1,10 @@
+docs/
+.env
+.cursorrules
+.venv
+ideas/*
+projects/*
+some_project/*
+improvments.txt
+extended_functionality
+generated_project/*
