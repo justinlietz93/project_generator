@@ -741,6 +741,17 @@ def execute_substep(orchestrator: AIOrchestrator, step_info: dict, step_index: i
     temperature = 0.0 if step_index == 5 else 0.2
     print(f"Using temperature {temperature} for {'file implementation' if step_index == 5 else 'regular step'}")
     
+    # Customize system prompt for file implementation step to emphasize complete functional code
+    if step_index == 5:
+        system_prompt = """You are an expert software engineer implementing a critical file in a complex project.
+CRITICAL INSTRUCTIONS:
+1. Write COMPLETE, FUNCTIONAL code that can be used in a production environment
+2. Do NOT write pseudo-code or example code
+3. Do NOT include comments like "This is just a demonstration" or "This is a simplified version"
+4. Implement FULL functionality according to requirements
+5. Include ALL necessary imports, constants, error handling, and logic
+6. Your code will be directly saved to a file and must work without modifications. You are responsible for ensuring the code is correct and functional."""
+    
     # Call the AI with the focused prompt
     ai_response = orchestrator.call_llm(system_prompt, prompt, max_tokens=max_output_tokens, temperature=temperature)
     
@@ -1585,6 +1596,10 @@ def implement_single_file(file_path: str, structure_content: str, step_outputs: 
 IMPORTANT: You are implementing a production-ready source file that must be complete,
 robust, and maintainable. Minimal or superficial implementations are not acceptable.
 
+CRITICAL: DO NOT WRITE DEMONSTRATION CODE. Write REAL, FUNCTIONAL code that would
+actually be used in a production environment. Your code will be saved directly to a file
+and is expected to work without modification.
+
 ## Project Context
 {step_outputs.get(0, '(No vision provided)')}
 
@@ -1646,7 +1661,14 @@ Output your implementation in `=== File: {file_path} ===`"""
     
     try:
         # Call the LLM to implement this file
-        system_prompt = "You are an expert software engineer implementing a critical file in a complex project."
+        system_prompt = """You are an expert software engineer implementing a critical file in a complex project.
+CRITICAL INSTRUCTIONS:
+1. Write COMPLETE, FUNCTIONAL code that can be used in a production environment
+2. Do NOT write pseudo-code or example code
+3. Do NOT include comments like "This is just a demonstration" or "This is a simplified version"
+4. Implement FULL functionality according to requirements
+5. Include ALL necessary imports, constants, error handling, and logic
+6. Your code will be directly saved to a file and is expected to work without modifications"""
         
         # Drastically increase the max_tokens to ensure complete file generation
         # This doesn't affect input token limits, only allows more output
