@@ -843,9 +843,8 @@ def generate_structure_script(structure_content: str, output_script_path: str, o
     Returns:
         bool: True if script was successfully generated, False otherwise
     """
-    print("Generating project structure script...")
+    print(f"Generating structure script at {output_script_path}")
     
-    # Create a prompt for the LLM to generate the bash script
     prompt = f"""
     I need you to create a bash script that will set up a project structure precisely in the current directory where the script is run.
     
@@ -890,6 +889,8 @@ echo "Creating project structure in: $(pwd)"
         # Write the script to file
         with open(output_script_path, 'w') as f:
             f.write(script_content)
+            
+        print(f"Script generated at: {output_script_path}")
         
         # Make the script executable
         os.chmod(output_script_path, 0o755)

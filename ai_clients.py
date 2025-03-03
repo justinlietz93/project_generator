@@ -4,6 +4,7 @@ ai_clients.py
 Minimal approach to calling:
 1) Claude 3.7 Sonnet (Anthropic-based)
 2) DeepSeek R1 (OpenAI-based approach)
+3) Gemini 2.0 Pro Experimental (Google AI)
 
 No streaming, no chunker, just a single .run(...) method that returns final text.
 """
@@ -16,7 +17,7 @@ try:
     from dotenv import load_dotenv, find_dotenv
     
     # Clear any existing API keys
-    for key in ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY']:
+    for key in ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'GEMINI_API_KEY']:
         if key in os.environ:
             del os.environ[key]
     
@@ -33,6 +34,9 @@ try:
         if 'DEEPSEEK_API_KEY' in os.environ:
             key = os.environ['DEEPSEEK_API_KEY']
             print(f"Loaded DeepSeek key: {key[:10]}...{key[-4:]}")
+        if 'GEMINI_API_KEY' in os.environ:
+            key = os.environ['GEMINI_API_KEY']
+            print(f"Loaded Gemini key: {key[:10]}...{key[-4:]}")
     else:
         print("No .env file found")
 except ImportError:
@@ -40,6 +44,13 @@ except ImportError:
 
 import anthropic
 import openai
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GEMINI = True
+except ImportError:
+    print("Warning: google-generativeai not installed. To use Gemini models, install with: pip install google-generativeai")
+    HAS_GEMINI = False
 
 class Claude37SonnetClient:
     """
@@ -258,21 +269,99 @@ class DeepseekR1Client:
             return f"ERROR from DeepSeek: {str(e)}"
 
 
+class GeminiProClient:
+    """
+    Minimal client for Google's Gemini 2.0 Pro Experimental model.
+    Uses environment variables:
+      - GEMINI_API_KEY: The API key for Google AI
+      - GEMINI_MODEL (optional, default "gemini-2.0-pro-exp-0205")
+    """
+
+    def __init__(self):
+        if not HAS_GEMINI:
+            raise ImportError("google-generativeai package is required to use Gemini models. Install with: pip install google-generativeai")
+        
+        self.api_key = os.environ.get("GEMINI_API_KEY", "missing-api-key")
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-pro-exp-0205")
+        self.client = genai.Client(api_key=self.api_key)
+
+    def run(self, messages, max_tokens=500000, temperature=0.2, enable_thinking=False, thinking_budget=None):
+        """
+        Call to the Gemini model.
+        
+        :param messages: list of { "role": "user"/"assistant"/"system", "content": "..."}
+        :param max_tokens: Maximum tokens in the response
+        :param temperature: Controls randomness (0.0-1.0, higher = more creative)
+        :param enable_thinking: Not used for Gemini
+        :param thinking_budget: Not used for Gemini
+        :return: The model's response text
+        """
+        try:
+            # Convert messages to Gemini-friendly format
+            contents = []
+            
+            # Process messages in order
+            for message in messages:
+                role = message["role"]
+                content = message["content"]
+                
+                # Handle system message - prefixing to the first user message
+                if role == "system":
+                    # Store system message for later use with user message
+                    system_content = content
+                    continue
+                
+                # For user messages, prepend any system instructions
+                if role == "user":
+                    if contents and 'system_content' in locals():
+                        # If we have a system message and this isn't the first message,
+                        # prepend it to the user message
+                        content = f"System Instructions: {system_content}\n\nUser Message: {content}"
+                        # Clear the system content after using it
+                        del system_content
+                        
+                    contents.append(content)
+                # Handle assistant messages
+                elif role == "assistant":
+                    contents.append({"role": "model", "parts": [content]})
+            
+            # Configure generation parameters
+            config = types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            # Call the Gemini API
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config
+            )
+            
+            # Extract and return the text response
+            return response.text
+            
+        except Exception as e:
+            return f"ERROR from Gemini: {str(e)}"
+
+
 class AIOrchestrator:
     """
-    A minimal orchestrator that picks either Claude3.7Sonnet or DeepseekR1
+    A minimal orchestrator that picks either Claude3.7Sonnet, DeepseekR1, or Gemini
     and calls .run(...) with system+user messages.
     """
 
     def __init__(self, model_name: str):
         """
-        model_name can be "claude37sonnet" or "deepseekr1"
+        model_name can be "claude37sonnet", "deepseekr1", or "gemini2pro"
         """
         self.model_name = model_name.lower()
         if self.model_name == "claude37sonnet":
             self.client = Claude37SonnetClient()
         elif self.model_name == "deepseekr1":
             self.client = DeepseekR1Client()
+        elif self.model_name == "gemini2pro":
+            self.client = GeminiProClient()
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
