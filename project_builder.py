@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 import json
 import time
 import subprocess
+import datetime
 
 from ai_clients import AIOrchestrator
 from utils import ProjectFile, SubStep, read_project_files, write_project_file, parse_ai_response_and_apply
@@ -41,6 +42,9 @@ PROJECT_DIR = "generated_project"
 
 # Add a flag to control linting (enabled by default)
 ENABLE_SYNTAX_CHECKING = True
+
+# Define alphabetic IDs for substeps (A, B, C, etc.)
+ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # Define the project building steps with substeps
 BUILDER_STEPS = [
@@ -1238,8 +1242,8 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     
     # Store outputs from each step
     step_outputs = {}
-    # Vision is always step 0
-    step_outputs[0] = vision
+    # Vision has its own special key - ensure it's never None
+    step_outputs['vision'] = vision if vision is not None else "(No vision provided)"
     
     # Store outputs from each sub-step
     sub_step_outputs = {}
@@ -1375,7 +1379,7 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                 You are tasked with creating a comprehensive README.md file for the project based on:
                 
                 1. Project Vision:
-                {step_outputs.get(0, '(No vision provided)')}
+                {step_outputs.get('vision', '(No vision provided)')}
                 
                 2. Project Structure:
                 {structure_content[:2000] if structure_content else '(No structure provided)'}
@@ -1425,7 +1429,7 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
             
             # Skip sub-steps before the start_substep if this is the start_step
             if i == start_step and start_substep and sub_step_id < start_substep:
-                print(f"Skipping sub-step {i}{sub_step_id} ({sub_step.name})...")
+                print(f"Skipping substep {sub_step_id}: {sub_step.name} (before requested start point)")
                 continue
                 
             print(f"\n--- Step {i}{sub_step_id}: {sub_step.name} ---")
@@ -1551,9 +1555,13 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     with open(os.path.join(PROJECT_DIR, "doc", "IMPLEMENTATION.md"), "w", encoding="utf-8") as f:
         f.write(output_summary)
     
-    print(f"\n=== Project Build Complete ===")
-    print(f"Your project has been generated in the '{PROJECT_DIR}' directory.")
-    print("You can find documentation in the 'doc' subdirectory.")
+    # Create a flag file to indicate the project is complete
+    flag_file = os.path.join(PROJECT_DIR, "doc", "project_complete.flag")
+    with open(flag_file, 'w') as f:
+        f.write(f"Project completed at {datetime.datetime.now().isoformat()}")
+    
+    print("\n✅ Project build complete!")
+    return
 
 def implement_single_file(file_path: str, structure_content: str, step_outputs: Dict[int, str], 
                           orchestrator: AIOrchestrator, model_name: str, file_map: Dict[str, ProjectFile]) -> bool:
@@ -1602,7 +1610,7 @@ actually be used in a production environment. Your code will be saved directly t
 and is expected to work without modification.
 
 ## Project Context
-{step_outputs.get(0, '(No vision provided)')}
+{step_outputs.get('vision', '(No vision provided)')}
 
 ## Project Structure
 The file is part of the following project structure:

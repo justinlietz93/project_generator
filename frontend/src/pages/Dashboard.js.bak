@@ -1,0 +1,287 @@
+import React from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Container,
+  Title,
+  Text,
+  Grid,
+  Card,
+  Button,
+  Group,
+  Badge,
+  ThemeIcon,
+  SimpleGrid,
+  Paper,
+  Box,
+  RingProgress,
+  Center,
+  useMantineTheme
+} from '@mantine/core';
+import {
+  IconBrain,
+  IconChartBar,
+  IconCreditCard,
+  IconArrowRight,
+  IconRobot,
+  IconBrandOpenai,
+  IconClock,
+  IconLock,
+  IconCode,
+  IconWand,
+  IconSparkles
+} from '@tabler/icons-react';
+import { useAuth } from '../context/AuthContext';
+
+const FeatureCard = ({ icon, title, description, buttonText, linkTo, color = "violet" }) => (
+  <Card shadow="sm" p="lg" radius="md" withBorder style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Card.Section p="md">
+      <ThemeIcon 
+        size={40} 
+        radius="md" 
+        variant="gradient" 
+        gradient={{ from: color, to: 'grape', deg: 135 }}
+      >
+        {icon}
+      </ThemeIcon>
+    </Card.Section>
+
+    <Title order={4} mb="xs">{title}</Title>
+    <Text size="sm" color="dimmed" mb="md" style={{ flexGrow: 1 }}>
+      {description}
+    </Text>
+
+    <Button 
+      variant="gradient" 
+      gradient={{ from: color, to: 'grape', deg: 135 }}
+      rightIcon={<IconArrowRight size={16} />}
+      component={Link}
+      to={linkTo}
+      mt="auto"
+    >
+      {buttonText}
+    </Button>
+  </Card>
+);
+
+const Dashboard = () => {
+  const { isPremium } = useAuth();
+  const theme = useMantineTheme();
+
+  // Demo data
+  const usageData = {
+    requests: 34,
+    tokensUsed: 12842,
+    tokensLimit: isPremium() ? 100000 : 20000,
+    requestsLimit: isPremium() ? 30 : 10
+  };
+
+  const usagePercentage = Math.min(100, Math.round((usageData.tokensUsed / usageData.tokensLimit) * 100));
+
+  return (
+    <Container size="lg" py="xl">
+      <Box mb="xl" style={{ textAlign: 'center' }}>
+        <ThemeIcon 
+          size={80} 
+          radius="md" 
+          mb="md" 
+          variant="gradient" 
+          gradient={{ from: 'violet', to: 'grape', deg: 135 }}
+          style={{ margin: '0 auto' }}
+        >
+          <IconSparkles size={50} />
+        </ThemeIcon>
+        <Title 
+          order={1} 
+          variant="gradient" 
+          gradient={{ from: 'violet', to: 'grape', deg: 135 }}
+          mb="sm"
+        >
+          Welcome to Scry AI Project Builder
+        </Title>
+        <Text size="lg" color="dimmed" maw={700} mx="auto">
+          Generate entire codebases from a single description with our advanced AI tools.
+          Build, test, and deploy projects faster than ever before.
+        </Text>
+      </Box>
+      
+      {/* Subscription info */}
+      <Paper 
+        p="md" 
+        withBorder 
+        mb="xl"
+        style={{ 
+          borderColor: theme.colors.violet[6],
+          background: theme.colorScheme === 'dark' 
+            ? theme.fn.rgba(theme.colors.violet[9], 0.15) 
+            : theme.fn.rgba(theme.colors.violet[0], 0.7) 
+        }}
+      >
+        <Group position="apart" align="flex-start">
+          <div>
+            <Title order={3} mb="xs">Your Subscription</Title>
+            <Group mb="md">
+              <Badge 
+                color={isPremium() ? "violet" : "blue"} 
+                size="lg"
+                variant="gradient"
+                gradient={{ from: 'violet', to: 'grape', deg: 135 }}
+              >
+                {isPremium() ? "Premium" : "Standard"} Plan
+              </Badge>
+              {isPremium() && (
+                <Badge color="green" variant="outline">
+                  All Models Available
+                </Badge>
+              )}
+            </Group>
+            <Text>
+              {isPremium() 
+                ? "You have full access to all AI models with priority processing."
+                : "Upgrade to Premium for access to more models and higher usage limits."}
+            </Text>
+          </div>
+          
+          {!isPremium() && (
+            <Button 
+              variant="gradient"
+              gradient={{ from: 'violet', to: 'grape', deg: 135 }}
+              component={Link} 
+              to="/pricing"
+            >
+              Upgrade Plan
+            </Button>
+          )}
+        </Group>
+      </Paper>
+      
+      {/* Usage statistics */}
+      <SimpleGrid cols={3} spacing="md" breakpoints={[{ maxWidth: 'sm', cols: 1 }]} mb="xl">
+        <Paper p="md" withBorder>
+          <Group position="apart" mb="xs">
+            <Text weight={500}>Tokens Used</Text>
+            <Badge color={usagePercentage > 80 ? "red" : "green"}>
+              {usagePercentage}%
+            </Badge>
+          </Group>
+          <Center>
+            <RingProgress
+              size={120}
+              thickness={12}
+              sections={[{ 
+                value: usagePercentage, 
+                color: usagePercentage > 80 ? "red" : "violet",
+                gradient: usagePercentage > 80 ? undefined : { from: 'violet', to: 'grape', deg: 135 } 
+              }]}
+              label={
+                <Box style={{ textAlign: 'center' }}>
+                  <Text size="xs" color="dimmed">Used</Text>
+                  <Text weight={700}>{usageData.tokensUsed}</Text>
+                </Box>
+              }
+            />
+          </Center>
+          <Text size="xs" color="dimmed" align="center" mt="sm">
+            Limit: {usageData.tokensLimit} tokens
+          </Text>
+        </Paper>
+        
+        <Paper p="md" withBorder>
+          <Group position="apart" mb="md">
+            <Text weight={500}>Available Models</Text>
+          </Group>
+          <Group spacing="xs" mb="xs">
+            <ThemeIcon color="violet" variant="light" size="sm">
+              <IconBrandOpenai size={14} />
+            </ThemeIcon>
+            <Text size="sm">Claude 3.7 Sonnet</Text>
+          </Group>
+          <Group spacing="xs" mb="xs">
+            <ThemeIcon color="blue" variant="light" size="sm">
+              <IconBrandOpenai size={14} />
+            </ThemeIcon>
+            <Text size="sm">DeepSeek R1</Text>
+          </Group>
+          <Group spacing="xs" mb="xs">
+            <ThemeIcon color={isPremium() ? "green" : "gray"} variant="light" size="sm">
+              <IconBrandOpenai size={14} />
+            </ThemeIcon>
+            <Text size="sm" color={isPremium() ? undefined : "dimmed"}>
+              Gemini 2.0 Pro {!isPremium() && <IconLock size={12} />}
+            </Text>
+          </Group>
+          <Group spacing="xs">
+            <ThemeIcon color={isPremium() ? "orange" : "gray"} variant="light" size="sm">
+              <IconBrandOpenai size={14} />
+            </ThemeIcon>
+            <Text size="sm" color={isPremium() ? undefined : "dimmed"}>
+              Ollama Models {!isPremium() && <IconLock size={12} />}
+            </Text>
+          </Group>
+        </Paper>
+        
+        <Paper p="md" withBorder>
+          <Group position="apart" mb="md">
+            <Text weight={500}>Usage Limits</Text>
+          </Group>
+          <Group position="apart" mb="xs">
+            <Group spacing="xs">
+              <ThemeIcon color="violet" variant="light" size="sm">
+                <IconClock size={14} />
+              </ThemeIcon>
+              <Text size="sm">Requests per minute</Text>
+            </Group>
+            <Text weight={500}>{usageData.requestsLimit}</Text>
+          </Group>
+          <Group position="apart" mb="xs">
+            <Group spacing="xs">
+              <ThemeIcon color="violet" variant="light" size="sm">
+                <IconRobot size={14} />
+              </ThemeIcon>
+              <Text size="sm">Max tokens per request</Text>
+            </Group>
+            <Text weight={500}>{isPremium() ? "8,000" : "2,000"}</Text>
+          </Group>
+        </Paper>
+      </SimpleGrid>
+      
+      {/* Quick access cards */}
+      <Title order={2} mb="md" variant="gradient" gradient={{ from: 'violet', to: 'grape', deg: 135 }}>Project Builder Tools</Title>
+      <Grid>
+        <Grid.Col span={12} sm={4}>
+          <FeatureCard
+            icon={<IconWand size={20} />}
+            title="AI Playground"
+            description="Experiment with different AI models and generate text based on your prompts."
+            buttonText="Go to Playground"
+            linkTo="/playground"
+            color="violet"
+          />
+        </Grid.Col>
+        
+        <Grid.Col span={12} sm={4}>
+          <FeatureCard
+            icon={<IconCode size={20} />}
+            title="Project Generator"
+            description="Generate complete project codebases from a single description with intelligent file structure."
+            buttonText="Create Project"
+            linkTo="/playground"
+            color="grape"
+          />
+        </Grid.Col>
+        
+        <Grid.Col span={12} sm={4}>
+          <FeatureCard
+            icon={<IconCreditCard size={20} />}
+            title="Subscription"
+            description="Manage your subscription plan, billing information, and payment details."
+            buttonText="Manage Subscription"
+            linkTo="/pricing"
+            color="pink"
+          />
+        </Grid.Col>
+      </Grid>
+    </Container>
+  );
+};
+
+export default Dashboard; 

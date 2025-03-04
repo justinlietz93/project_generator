@@ -5,19 +5,21 @@ Minimal approach to calling:
 1) Claude 3.7 Sonnet (Anthropic-based)
 2) DeepSeek R1 (OpenAI-based approach)
 3) Gemini 2.0 Pro Experimental (Google AI)
+4) Ollama models (locally or remotely hosted)
 
-No streaming, no chunker, just a single .run(...) method that returns final text.
 """
 
 import os
 from pathlib import Path
+import requests
+import json
 
 # Ensure clean environment loading
 try:
     from dotenv import load_dotenv, find_dotenv
     
     # Clear any existing API keys
-    for key in ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'GEMINI_API_KEY']:
+    for key in ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'GEMINI_API_KEY', 'OLLAMA_HOST']:
         if key in os.environ:
             del os.environ[key]
     
@@ -37,6 +39,9 @@ try:
         if 'GEMINI_API_KEY' in os.environ:
             key = os.environ['GEMINI_API_KEY']
             print(f"Loaded Gemini key: {key[:10]}...{key[-4:]}")
+        if 'OLLAMA_HOST' in os.environ:
+            host = os.environ['OLLAMA_HOST']
+            print(f"Using Ollama host: {host}")
     else:
         print("No .env file found")
 except ImportError:
@@ -183,14 +188,37 @@ class DeepseekR1Client:
 
     def __init__(self):
         self.api_key = os.environ.get("DEEPSEEK_API_KEY", "missing-deepseek-key")
-        # Create a proper client instance using the modern SDK pattern
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url="https://api.deepseek.com"
-        )
+        
+        # DeepSeek API configuration
+        # Base URL updated per DeepSeek API documentation
+        base_url = "https://api.deepseek.com/v1"
+        
+        # Use OpenAI client with DeepSeek base URL
+        try:
+            import httpx
+            # Custom headers needed for DeepSeek authentication
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            http_client = httpx.Client(
+                base_url=base_url,
+                headers=headers,
+                timeout=60.0
+            )
+            self.client = openai.OpenAI(
+                api_key=self.api_key, 
+                http_client=http_client,
+                base_url=base_url
+            )
+        except Exception as e:
+            print(f"Warning: OpenAI client creation failed: {e}")
+            # Fall back to direct HTTP requests if all else fails
+            self.client = None
+        
         self.model_name = "deepseek-reasoner"
 
-    def run(self, messages, max_tokens=64000, temperature=0.2):
+    def run(self, messages, max_tokens=8192, temperature=0.2):
         """
         Call to DeepSeek R1 with automatic streaming for large token counts
         
@@ -200,6 +228,32 @@ class DeepseekR1Client:
         :return: final string including reasoning if available
         """
         try:
+            # If client initialization failed, make direct API call
+            if self.client is None:
+                print("Falling back to direct API call for DeepSeek")
+                import requests
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                }
+                response = requests.post(
+                    "https://api.deepseek.com/v1/chat/completions",
+                    json=payload,
+                    headers=headers
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    return content
+                else:
+                    raise Exception(f"Error code: {response.status_code} - {response.text}")
+            
             # Use streaming for large token counts to avoid timeouts
             STREAMING_THRESHOLD = 6000  # Lower threshold to be safer
             use_streaming = max_tokens > STREAMING_THRESHOLD
@@ -345,25 +399,127 @@ class GeminiProClient:
             return f"ERROR from Gemini: {str(e)}"
 
 
+class OllamaClient:
+    """
+    Client for Ollama models running locally or remotely.
+    Uses environment variables:
+      - OLLAMA_HOST: The host where Ollama is running (default: http://localhost:11434)
+    """
+
+    def __init__(self, model_name):
+        self.host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self.model_name = model_name
+        # Remove the 'ollama:' prefix if present
+        if self.model_name.startswith("ollama:"):
+            self.model_name = self.model_name[7:]
+        
+        # Check if the model exists
+        try:
+            response = requests.get(f"{self.host}/api/tags")
+            if response.status_code == 200:
+                models = [model["name"] for model in response.json().get("models", [])]
+                if self.model_name not in models:
+                    print(f"Warning: Model '{self.model_name}' not found in Ollama. Available models: {models}")
+        except Exception as e:
+            print(f"Warning: Could not connect to Ollama at {self.host}: {e}")
+
+    def run(self, messages, max_tokens=4096, temperature=0.2):
+        """
+        Call to Ollama model
+        
+        :param messages: list of { "role": "user"/"assistant"/"system", "content": "..."}
+        :param max_tokens: limit for the generated text (note: not all Ollama models respect this)
+        :param temperature: Controls randomness (0.0 to 1.0)
+        :return: final string
+        """
+        try:
+            # Convert client format to Ollama format
+            ollama_messages = []
+            for msg in messages:
+                role = msg["role"]
+                # Ollama uses "assistant" instead of "model"
+                if role == "model":
+                    role = "assistant"
+                ollama_messages.append({
+                    "role": role,
+                    "content": msg["content"]
+                })
+            
+            # Prepare request data
+            data = {
+                "model": self.model_name,
+                "messages": ollama_messages,
+                "options": {
+                    "temperature": temperature
+                }
+            }
+            
+            # Add max_tokens if supported
+            if max_tokens:
+                data["options"]["num_predict"] = max_tokens
+            
+            # Make API call
+            response = requests.post(f"{self.host}/api/chat", json=data)
+            
+            if response.status_code == 200:
+                return response.json().get("message", {}).get("content", "")
+            else:
+                error_message = f"Ollama API Error: HTTP {response.status_code} - {response.text}"
+                print(error_message)
+                return f"ERROR from Ollama: {error_message}"
+        
+        except Exception as e:
+            error_message = f"Ollama API Error: {str(e)}"
+            print(error_message)
+            return f"ERROR from Ollama: {error_message}"
+
+
 class AIOrchestrator:
     """
-    A minimal orchestrator that picks either Claude3.7Sonnet, DeepseekR1, or Gemini
+    A minimal orchestrator that picks either Claude3.7Sonnet, DeepseekR1, Gemini, or Ollama models
     and calls .run(...) with system+user messages.
     """
 
     def __init__(self, model_name: str):
         """
-        model_name can be "claude37sonnet", "deepseekr1", or "gemini2pro"
+        model_name can be:
+        - "claude37sonnet" 
+        - "deepseekr1"
+        - "gemini2pro"
+        - "ollama:modelname" or just a model name for Ollama
         """
         self.model_name = model_name.lower()
+        
+        # Standard models
         if self.model_name == "claude37sonnet":
             self.client = Claude37SonnetClient()
+            self.max_tokens_limit = 64000
         elif self.model_name == "deepseekr1":
             self.client = DeepseekR1Client()
+            self.max_tokens_limit = 8192  # DeepSeek's limit
         elif self.model_name == "gemini2pro":
             self.client = GeminiProClient()
+            self.max_tokens_limit = 64000
+        # Ollama models
+        elif self.model_name.startswith("ollama:") or self._is_ollama_model(self.model_name):
+            self.client = OllamaClient(self.model_name)
+            self.max_tokens_limit = 4096  # Default for most Ollama models
         else:
             raise ValueError(f"Unknown model: {model_name}")
+
+    def _is_ollama_model(self, model_name):
+        """Check if a model name might be an Ollama model"""
+        # Try to check available Ollama models
+        try:
+            ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            response = requests.get(f"{ollama_host}/api/tags")
+            if response.status_code == 200:
+                models = [model["name"] for model in response.json().get("models", [])]
+                return model_name in models
+        except:
+            # If we can't connect or validate, just return False
+            return False
+        return False
 
     def call_llm(self, system_prompt: str, user_prompt: str, max_tokens: int = 64000, temperature: float = 0.2) -> str:
         """
@@ -375,6 +531,9 @@ class AIOrchestrator:
         :param temperature: Controls randomness (0.0-1.0, higher = more creative)
         :return: The model's response text
         """
+        # Ensure max_tokens is within the model's limit
+        max_tokens = min(max_tokens, self.max_tokens_limit)
+        
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}

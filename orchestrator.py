@@ -417,7 +417,34 @@ This ensures cross-platform compatibility.""")
             print("Running syntax check on generated project...")
             run_project_builder(vision=None, model_name=args.model, run_syntax_check_only=True)
         else:
-            run_project_builder(vision=args.domain, model_name=args.model, 
+            # Check for user_prompt.txt if no domain was provided
+            domain_vision = args.domain
+            if not domain_vision and os.path.exists("user_prompt.txt"):
+                try:
+                    with open("user_prompt.txt", 'r', encoding='utf-8') as f:
+                        file_content = f.read().strip()
+                    
+                    if file_content:
+                        print("\n=== FOUND USER_PROMPT.TXT ===")
+                        print("Preview of user_prompt.txt:")
+                        print("---")
+                        # Show first 200 chars with ellipsis if longer
+                        preview = file_content[:200] + ("..." if len(file_content) > 200 else "")
+                        print(preview)
+                        print("---")
+                        
+                        if auto_yes:
+                            print("Auto-yes enabled: Using user_prompt.txt as project vision.")
+                            domain_vision = file_content
+                        else:
+                            use_file = input("Use this content as your project vision? (y/n): ").strip().lower()
+                            if use_file == 'y':
+                                domain_vision = file_content
+                                print("Using user_prompt.txt as project vision.")
+                except Exception as e:
+                    print(f"Error reading user_prompt.txt: {e}")
+            
+            run_project_builder(vision=domain_vision, model_name=args.model, 
                            start_step=args.start_step, start_substep=args.start_substep)
         return
     elif research_mode:
@@ -858,6 +885,35 @@ This ensures cross-platform compatibility.""")
                                 write_project_file(PROJECT_DIR, file_map[clean_path])
                             
                             print(f"Successfully wrote {output_file} to some_project/{output_file}")
+                            
+                            # Save context.md with updated step outputs after each substep
+                            context_file = os.path.join(PROJECT_DIR, "doc", "context.md")
+                            with open(context_file, 'w', encoding='utf-8') as context_f:
+                                context_f.write("# Project Context File\n\n")
+                                context_f.write("## Vision\n")
+                                if 'vision' in step_outputs:
+                                    context_f.write(step_outputs['vision'])
+                                context_f.write("\n\n")
+                                
+                                # Write each completed step
+                                for s_idx in range(1, i+1):
+                                    if s_idx in step_outputs:
+                                        context_f.write(f"## Step {s_idx} Output\n")
+                                        context_f.write(step_outputs[s_idx])
+                                        context_f.write("\n\n")
+                                
+                                # For the current step, add substep outputs
+                                context_f.write(f"## Step {i} Substeps\n")
+                                for s_idx in range(1, j+1):
+                                    sub_key = f"step{i}_sub{s_idx}"
+                                    if sub_key in sub_step_outputs:
+                                        s_step = step["sub_steps"][s_idx-1]
+                                        context_f.write(f"### Substep {s_step.id}: {s_step.name}\n")
+                                        context_f.write(sub_step_outputs[sub_key])
+                                        context_f.write("\n\n")
+                            
+                            print(f"Updated context file at doc/context.md")
+                            
                             retry_substep = False  # Sub-step completed successfully, move to next one
                         elif apply_yn == 'r':
                             # Retry sub-step
@@ -1061,6 +1117,103 @@ def mark_file_complete(todo_content, file_path):
             updated_lines.append(line)
     
     return '\n'.join(updated_lines)
+
+def build_from_file(model_name, file_path, start_step=None, start_substep=None, use_vision_from_file=True):
+    """Build a project from a file."""
+    
+    # First check if we should load from context.md
+    context_path = os.path.join(PROJECT_DIR, "doc", "context.md")
+    if os.path.exists(context_path):
+        print(f"Found context.md file, loading previous context...")
+        with open(context_path, 'r', encoding='utf-8') as f:
+            context_content = f.read()
+        
+        # Parse the context file to populate step_outputs
+        vision = ""
+        current_section = None
+        current_content = ""
+        step_outputs = {}
+        
+        for line in context_content.splitlines():
+            if line.startswith("## Vision"):
+                current_section = "vision"
+                current_content = ""
+            elif line.startswith("## Step "):
+                # Save previous section
+                if current_section == "vision":
+                    vision = current_content.strip()
+                    step_outputs['vision'] = vision
+                elif current_section and current_section.startswith("step"):
+                    step_num = int(current_section.replace("step", ""))
+                    step_outputs[step_num] = current_content.strip()
+                
+                # Start new section
+                try:
+                    step_num = int(line.replace("## Step ", "").split(" ")[0])
+                    current_section = f"step{step_num}"
+                    current_content = ""
+                except:
+                    current_section = None
+            elif line.startswith("### Substep "):
+                # Substep content is included in the step content
+                pass
+            elif current_section:
+                current_content += line + "\n"
+        
+        # Save the last section
+        if current_section == "vision":
+            vision = current_content.strip()
+            step_outputs['vision'] = vision
+        elif current_section and current_section.startswith("step"):
+            step_num = int(current_section.replace("step", ""))
+            step_outputs[step_num] = current_content.strip()
+        
+        # If vision was found in context.md and we're supposed to use it
+        if vision and use_vision_from_file:
+            print(f"Using vision from context.md file")
+        # Otherwise, load from the specified file
+        elif file_path and os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                vision = f.read().strip()
+                step_outputs['vision'] = vision
+        else:
+            print(f"Error: No vision found in context.md and no input file specified")
+            return
+    
+    # If we don't have a context file or vision wasn't found, load from the specified file
+    elif file_path and os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            vision = f.read().strip()
+            step_outputs = {'vision': vision}
+    else:
+        print(f"Error: No context.md file found and no input file specified or file doesn't exist: {file_path}")
+        return
+    
+    # Run the project builder with the step_outputs
+    run_project_builder(
+        vision=vision, 
+        model_name=model_name, 
+        start_step=start_step or 1,
+        start_substep=start_substep,
+        step_outputs=step_outputs
+    )
+
+def run_project_builder(vision, model_name, start_step=1, start_substep=None, step_outputs=None):
+    """Run the project builder."""
+    from project_builder import run_project_builder
+    
+    # Initialize step_outputs if not provided
+    if step_outputs is None:
+        step_outputs = {'vision': vision}
+    
+    # Run the project builder
+    run_project_builder(
+        vision=vision,
+        model_name=model_name,
+        start_step=start_step,
+        start_substep=start_substep,
+        existing_step_outputs=step_outputs
+    )
 
 if __name__ == "__main__":
     main()

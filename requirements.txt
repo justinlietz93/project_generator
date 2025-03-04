@@ -1,4 +1,19 @@
-requests
-anthropic
-openai
+fastapi
+uvicorn
+pydantic
+stripe
+sqlalchemy
+python-jose
+passlib
+python-multipart
 python-dotenv
+pyjwt
+requests
+openai
+anthropic
+# Optional dependencies
+python-jose[cryptography]
+bcrypt
+alembic
+psycopg2-binary
+httpx

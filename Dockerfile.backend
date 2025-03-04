@@ -1,0 +1,43 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create health check endpoint
+RUN echo 'from fastapi import FastAPI, APIRouter\n\
+router = APIRouter()\n\
+@router.get("/health", status_code=200)\n\
+def health_check():\n\
+    return {"status": "healthy"}\n\
+' > health_check.py
+
+# Update API server to include health check
+RUN echo '\n\
+# Add health check routes\n\
+from health_check import router as health_router\n\
+app.include_router(health_router)\n\
+' >> api_server.py
+
+# Initialize the database if SQLite is used
+RUN if grep -q "sqlite" api_server.py; then \
+    python -c "from database import init_db; init_db()"; \
+    fi
+
+# Run the application
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Expose the port
+EXPOSE 8000 
