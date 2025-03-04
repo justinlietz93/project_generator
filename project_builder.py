@@ -25,11 +25,13 @@ import os
 import sys
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 import json
 import time
 import subprocess
 import datetime
+from threading import Timer
+from html.parser import HTMLParser
 
 from ai_clients import AIOrchestrator
 from utils import ProjectFile, SubStep, read_project_files, write_project_file, parse_ai_response_and_apply
@@ -849,37 +851,55 @@ def generate_structure_script(structure_content: str, output_script_path: str, o
     """
     print(f"Generating structure script at {output_script_path}")
     
-    prompt = f"""
-    I need you to create a bash script that will set up a project structure precisely in the current directory where the script is run.
+    # Define retry parameters
+    max_retries = 3
+    retry_count = 0
     
-    CRITICAL INSTRUCTIONS ABOUT PATHS:
-    1. The script will be executed directly inside the project directory (C:\\git\\project_maker\\generated_project\\)
-    2. ALL files and directories must be created INSIDE this directory
-    3. DO NOT create any project root directory - your current working directory IS already the project root
-    4. If the structure documentation shows: "neuroca/src/main.py", just create "./src/main.py" 
-    5. NEVER use absolute paths or parent directory references (like ../) in your script
-    6. All paths should be relative to the current directory
-    7. Only use ./ or direct subdirectory references like "src/" or "api/"
-    
-    The script should:
-    1. Create all directories first using mkdir -p
-    2. Create all empty files using touch
-    3. Print progress as it creates directories and files
-    
-    Here's the project structure document:
-    
-    {structure_content}
-    
-    IMPORTANT REMINDER: Your script will be run FROM INSIDE the project directory. Do not try to navigate to different directories.
-    """
-    
-    try:
-        # Use the orchestrator to generate the script
-        system_prompt = "You are an expert in bash scripting. Your task is to convert a project structure description into a bash script that creates all directories and files."
-        script_content = orchestrator.call_llm(system_prompt, prompt, max_tokens=8000, temperature=0.2)
-        
-        # Add a header comment to clarify the purpose and execution directory
-        script_header = """#!/bin/bash
+    while retry_count < max_retries:
+        try:
+            prompt = f"""
+            I need you to create a bash script that will set up a project structure precisely in the current directory where the script is run.
+            
+            CRITICAL INSTRUCTIONS ABOUT PATHS:
+            1. The script will be executed directly inside the project directory (C:\\git\\project_maker\\generated_project\\)
+            2. ALL files and directories must be created INSIDE this directory
+            3. DO NOT create any project root directory - your current working directory IS already the project root
+            4. If the structure documentation shows: "neuroca/src/main.py", just create "./src/main.py" 
+            5. NEVER use absolute paths or parent directory references (like ../) in your script
+            6. All paths should be relative to the current directory
+            7. Only use ./ or direct subdirectory references like "src/" or "api/"
+            
+            ENCODING REQUIREMENTS:
+            1. Use only ASCII characters in your script (no Unicode or special characters)
+            2. Avoid any non-English characters, emojis, or special symbols
+            
+            The script should:
+            1. Create all directories first using mkdir -p
+            2. Create all empty files using touch
+            3. Print progress as it creates directories and files
+            
+            Here's the project structure document:
+            
+            {structure_content}
+            
+            IMPORTANT REMINDER: Your script will be run FROM INSIDE the project directory. Do not try to navigate to different directories.
+            """
+            
+            # Use the orchestrator to generate the script
+            system_prompt = "You are an expert in bash scripting. Your task is to convert a project structure description into a bash script that creates all directories and files. IMPORTANT: Use only ASCII characters in your script (no Unicode special characters)."
+            script_content = orchestrator.call_llm(system_prompt, prompt, max_tokens=8000, temperature=0.2)
+            
+            # Sanitize the content to remove any potentially problematic characters
+            script_content = ''.join(char for char in script_content if ord(char) < 128)
+            
+            # Verify that the script is not empty or too short
+            if not script_content or len(script_content.strip()) < 50:
+                print(f"⚠️ Generated script is too short or empty. Retrying ({retry_count + 1}/{max_retries})...")
+                retry_count += 1
+                continue
+            
+            # Add a header comment to clarify the purpose and execution directory
+            script_header = """#!/bin/bash
 # Project structure setup script
 # This script should be run from inside the project root directory
 # It will create all directories and files for the project structure
@@ -888,22 +908,39 @@ def generate_structure_script(structure_content: str, output_script_path: str, o
 echo "Creating project structure in: $(pwd)"
 
 """
-        script_content = script_header + script_content
-        
-        # Write the script to file
-        with open(output_script_path, 'w') as f:
-            f.write(script_content)
+            script_content = script_header + script_content
             
-        print(f"Script generated at: {output_script_path}")
-        
-        # Make the script executable
-        os.chmod(output_script_path, 0o755)
-        
-        print(f"✅ Structure script generated at {output_script_path}")
-        return True
-    except Exception as e:
-        print(f"❌ Failed to generate structure script: {str(e)}")
-        return False
+            # Write the script to file with explicit encoding
+            with open(output_script_path, 'w', encoding='ascii', errors='ignore') as f:
+                f.write(script_content)
+                
+            print(f"Script generated at: {output_script_path}")
+            
+            # Make the script executable
+            os.chmod(output_script_path, 0o755)
+            
+            # Check if the file was written successfully and contains actual content
+            if os.path.getsize(output_script_path) < 100:  # Arbitrary size check
+                print(f"⚠️ Script file too small ({os.path.getsize(output_script_path)} bytes). Retrying...")
+                retry_count += 1
+                continue
+                
+            print(f"✅ Structure script generated at {output_script_path} ({os.path.getsize(output_script_path)} bytes)")
+            return True
+            
+        except UnicodeEncodeError as e:
+            print(f"⚠️ Character encoding error during script generation: {str(e)}")
+            print(f"Retrying ({retry_count + 1}/{max_retries})...")
+            retry_count += 1
+            
+        except Exception as e:
+            print(f"❌ Failed to generate structure script: {str(e)}")
+            print(f"Retrying ({retry_count + 1}/{max_retries})...")
+            retry_count += 1
+    
+    # If we've exhausted all retries
+    print(f"❌ Failed to generate script after {max_retries} attempts")
+    return False
 
 def execute_structure_script(script_path: str) -> bool:
     """
@@ -916,6 +953,25 @@ def execute_structure_script(script_path: str) -> bool:
         bool: True if script executed successfully, False otherwise
     """
     print("Executing project structure script...")
+    
+    # First check if the script file exists and has content
+    if not os.path.exists(script_path):
+        print(f"❌ Script file not found: {script_path}")
+        return False
+        
+    if os.path.getsize(script_path) < 100:  # Arbitrary minimum size for a valid script
+        print(f"❌ Script file is too small ({os.path.getsize(script_path)} bytes), likely invalid")
+        return False
+    
+    # Get the list of existing files before script execution
+    project_dir_abs = os.path.abspath(PROJECT_DIR)
+    existing_files = []
+    for root, dirs, files in os.walk(project_dir_abs):
+        for file in files:
+            if file != os.path.basename(script_path):
+                existing_files.append(os.path.join(root, file))
+    
+    print(f"Found {len(existing_files)} existing files before script execution")
     
     try:
         # Make sure PROJECT_DIR exists and is clean - we'll create all files inside it
@@ -974,19 +1030,27 @@ def execute_structure_script(script_path: str) -> bool:
                         print("Script output:")
                         print(result.stdout)
                     
-                    # Check what files were created
-                    print("Verifying created files...")
-                    created_files = []
+                    # Get the list of files after script execution
+                    new_files = []
                     for root, dirs, files in os.walk(project_dir_abs):
-                        rel_root = os.path.relpath(root, project_dir_abs)
-                        if rel_root == '.':
-                            rel_root = ''
                         for file in files:
                             if file != os.path.basename(script_path):
-                                rel_path = os.path.join(rel_root, file).replace('\\', '/')
-                                created_files.append(rel_path)
+                                new_files.append(os.path.join(root, file))
                     
-                    print(f"Created {len(created_files)} files")
+                    # Calculate which files are actually new
+                    truly_new_files = [f for f in new_files if f not in existing_files]
+                    
+                    if not truly_new_files:
+                        print("⚠️ Warning: No new files were created by the script!")
+                        return False
+                    
+                    # Convert absolute paths to relative for display
+                    created_files = []
+                    for file_path in truly_new_files:
+                        rel_path = os.path.relpath(file_path, project_dir_abs).replace('\\', '/')
+                        created_files.append(rel_path)
+                    
+                    print(f"Created {len(created_files)} new files")
                     # Print first 5 files as a sample
                     for file in created_files[:5]:
                         print(f" - {file}")
@@ -1073,18 +1137,27 @@ def execute_structure_script(script_path: str) -> bool:
                             pass
                         print(f"Created file: {full_path}")
                 
-                # Check what files were created
-                created_files = []
+                # Get the list of files after script execution
+                new_files = []
                 for root, dirs, files in os.walk(base_dir):
-                    rel_root = os.path.relpath(root, base_dir)
-                    if rel_root == '.':
-                        rel_root = ''
                     for file in files:
                         if file != os.path.basename(script_path):
-                            rel_path = os.path.join(rel_root, file).replace('\\', '/')
-                            created_files.append(rel_path)
+                            new_files.append(os.path.join(root, file))
                 
-                print(f"Created {len(created_files)} files")
+                # Calculate which files are actually new
+                truly_new_files = [f for f in new_files if f not in existing_files]
+                
+                if not truly_new_files:
+                    print("⚠️ Warning: No new files were created by the script!")
+                    return False
+                
+                # Convert absolute paths to relative for display
+                created_files = []
+                for file_path in truly_new_files:
+                    rel_path = os.path.relpath(file_path, base_dir).replace('\\', '/')
+                    created_files.append(rel_path)
+                
+                print(f"Created {len(created_files)} new files")
                 for file in created_files[:5]:
                     print(f" - {file}")
                 if len(created_files) > 5:
@@ -1245,6 +1318,17 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     # Vision has its own special key - ensure it's never None
     step_outputs['vision'] = vision if vision is not None else "(No vision provided)"
     
+    # Get project ID from the status file
+    project_id = None
+    status_path = os.path.join(PROJECT_DIR, "status.json")
+    if os.path.exists(status_path):
+        try:
+            with open(status_path, 'r') as f:
+                status_data = json.load(f)
+                project_id = status_data.get("project_id")
+        except Exception as e:
+            print(f"Warning: Could not read project ID from status file: {e}")
+    
     # Store outputs from each sub-step
     sub_step_outputs = {}
     
@@ -1263,6 +1347,28 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     
     # Execute steps in sequence
     for i, step in enumerate(BUILDER_STEPS, start=1):
+        # Check for stop signal
+        if project_id and os.environ.get(f"STOP_BUILD_{project_id}", "false").lower() == "true":
+            print(f"\n=== STOP SIGNAL DETECTED ===")
+            print(f"Stopping project build at step {i}")
+            # Update status if it exists
+            if os.path.exists(status_path):
+                try:
+                    with open(status_path, 'r') as f:
+                        status_data = json.load(f)
+                    
+                    status_data["status"] = "stopped"
+                    status_data.setdefault("progress_updates", []).append({
+                        "time": datetime.datetime.utcnow().isoformat(),
+                        "message": f"Project build stopped at step {i}"
+                    })
+                    
+                    with open(status_path, 'w') as f:
+                        json.dump(status_data, f, indent=2)
+                except Exception as e:
+                    print(f"Error updating status file: {e}")
+            return
+            
         # Skip steps before the start_step
         if i < start_step:
             print(f"Skipping step {i} ({step['phase_name']})...")
@@ -1285,8 +1391,28 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                 # Generate the bash script
                 script_path = os.path.join(PROJECT_DIR, "setup_project_structure.sh")
                 if generate_structure_script(structure_content, script_path, orchestrator, model_name):
-                    print("✅ Implementation plan and structure script generated")
-                    step_outputs[i] = f"Generated setup_project_structure.sh script based on project structure"
+                    # Verify the script has content and is valid
+                    if os.path.exists(script_path) and os.path.getsize(script_path) > 100:
+                        # Check if the script contains essential bash commands (mkdir, touch)
+                        with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            script_content = f.read()
+                            if 'mkdir' in script_content and ('touch' in script_content or 'echo' in script_content):
+                                print("✅ Implementation plan and structure script generated and verified")
+                                step_outputs[i] = f"Generated setup_project_structure.sh script based on project structure"
+                            else:
+                                print("❌ Generated script is missing essential commands (mkdir/touch). Please retry step 4.")
+                                # Remove the invalid script
+                                try:
+                                    os.remove(script_path)
+                                except Exception as e:
+                                    print(f"Warning: Could not remove invalid script: {e}")
+                                return
+                    else:
+                        print("❌ Generated script is empty or too small. Please retry step 4.")
+                        return
+                else:
+                    print("❌ Failed to generate structure script. Please retry step 4.")
+                    return
                 
             elif i == 5:  # File Implementation
                 print("\n=== Setting up Project Structure ===")
@@ -1297,7 +1423,68 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                     print("Error: setup_project_structure.sh not found. Please run step 4 first.")
                     return
                 
+                # Verify the script has content before attempting to execute it
+                if os.path.getsize(script_path) < 100:
+                    print("Error: setup_project_structure.sh is empty or too small. Please run step. 4 again")
+                    return
+                
+                # Additional verification of script content
+                with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    script_content = f.read()
+                    if not ('mkdir' in script_content and ('touch' in script_content or 'echo' in script_content)):
+                        print("Error: setup_project_structure.sh doesn't contain required commands. Please run step 4 again.")
+                        return
+                
+                # Count existing files before execution for better verification
+                existing_files_count = 0
+                for root, dirs, files in os.walk(PROJECT_DIR):
+                    existing_files_count += len(files)
+                print(f"Before script execution: {existing_files_count} files exist in project directory")
+                
                 if execute_structure_script(script_path):
+                    # Count files after script execution
+                    new_files_count = 0
+                    for root, dirs, files in os.walk(PROJECT_DIR):
+                        new_files_count += len(files)
+                    
+                    # Check if new files were actually created
+                    if new_files_count <= existing_files_count + 1:  # +1 to account for the script itself
+                        print("⚠️ Warning: No new files appear to have been created by the script. Structure may be incomplete.")
+                        
+                        # Use environment variable to determine if we should continue automatically
+                        auto_continue = os.environ.get("AUTO_CONTINUE_ON_ERROR", "false").lower() == "true"
+                        
+                        if not auto_continue:
+                            # Use a timeout to avoid blocking indefinitely
+                            continue_execution = [False]  # Using a list for mutable reference
+                            
+                            def timeout_handler():
+                                print("No input received in 30 seconds. Continuing execution...")
+                                continue_execution[0] = True
+                            
+                            # Set a 30 second timeout
+                            timer = Timer(30, timeout_handler)
+                            timer.start()
+                            
+                            try:
+                                user_continue = input("Continue anyway? (y/n, default=y in 30 seconds): ").strip().lower()
+                                timer.cancel()  # Cancel the timer as we got input
+                                
+                                if user_continue == 'n':
+                                    print("Aborting. Please run step 4 again to regenerate the script.")
+                                    return
+                                continue_execution[0] = True
+                            except Exception:
+                                # If there's any issue with input, default to continuing
+                                continue_execution[0] = True
+                            
+                            # Wait for timer if it's still running
+                            timer.join(0.1)
+                            
+                            if not continue_execution[0]:
+                                print("Aborting. Please run step 4 again to regenerate the script.")
+                                return
+                    
                     # Discover all files that need implementation
                     all_files = discover_all_files(PROJECT_DIR)
                     print(f"Discovered {len(all_files)} files that need implementation")
@@ -1426,6 +1613,28 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
         for j, sub_step in enumerate(sub_steps):
             sub_step_id = ALPHA[j]
             sub_step_key = f"{i}{sub_step_id}"
+            
+            # Check for stop signal
+            if project_id and os.environ.get(f"STOP_BUILD_{project_id}", "false").lower() == "true":
+                print(f"\n=== STOP SIGNAL DETECTED ===")
+                print(f"Stopping project build at step {i}, substep {sub_step_id}")
+                # Update status if it exists
+                if os.path.exists(status_path):
+                    try:
+                        with open(status_path, 'r') as f:
+                            status_data = json.load(f)
+                        
+                        status_data["status"] = "stopped"
+                        status_data.setdefault("progress_updates", []).append({
+                            "time": datetime.datetime.utcnow().isoformat(),
+                            "message": f"Project build stopped at step {i}, substep {sub_step_id}"
+                        })
+                        
+                        with open(status_path, 'w') as f:
+                            json.dump(status_data, f, indent=2)
+                    except Exception as e:
+                        print(f"Error updating status file: {e}")
+                return
             
             # Skip sub-steps before the start_substep if this is the start_step
             if i == start_step and start_substep and sub_step_id < start_substep:

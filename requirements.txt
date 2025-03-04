@@ -17,3 +17,4 @@ bcrypt
 alembic
 psycopg2-binary
 httpx
+google-generativeai

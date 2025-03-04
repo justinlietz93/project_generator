@@ -40,7 +40,9 @@ import {
   IconArrowRight,
   IconWand,
   IconCheck,
-  IconAlertCircle
+  IconAlertCircle,
+  IconPlayerStop,
+  IconPlayerPlay
 } from '@tabler/icons-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -369,18 +371,26 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
         setProgressUpdates(response.data.progress_updates);
       }
       
-      // If project is complete, stop polling
-      if (response.data.status === 'complete') {
+      // If project is complete or stopped, stop polling
+      if (response.data.status === 'complete' || response.data.status === 'stopped' || response.data.status === 'error') {
         if (refreshInterval) {
           clearInterval(refreshInterval);
           setRefreshInterval(null);
         }
         
-        notifications.show({
-          title: 'Project Complete',
-          message: 'Your project has been successfully built!',
-          color: 'green'
-        });
+        if (response.data.status === 'complete') {
+          notifications.show({
+            title: 'Project Complete',
+            message: 'Your project has been successfully built!',
+            color: 'green'
+          });
+        } else if (response.data.status === 'stopped') {
+          notifications.show({
+            title: 'Project Stopped',
+            message: 'The project build was stopped.',
+            color: 'yellow'
+          });
+        }
       }
       
       return response.data; // Return the data for promise chaining
@@ -388,6 +398,66 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
       console.error('Error checking project status:', err);
       setError('Could not retrieve project status.');
       throw err; // Rethrow for promise handling
+    }
+  };
+
+  // Stop the project build
+  const handleStopBuild = async () => {
+    if (!projectId) return;
+    
+    // Ask for confirmation
+    const confirmed = window.confirm('Are you sure you want to stop the project build? This action cannot be undone.');
+    if (!confirmed) return;
+    
+    try {
+      setLoading(true);
+      const response = await axios.post(`/project/stop/${projectId}`);
+      
+      notifications.show({
+        title: 'Build Stopping',
+        message: 'The project build is being stopped. This may take a moment.',
+        color: 'blue'
+      });
+      
+      // Force a status check to update the UI
+      checkProjectStatus();
+    } catch (err) {
+      console.error('Error stopping project:', err);
+      notifications.show({
+        title: 'Stop Failed',
+        message: err.response?.data?.detail || 'Could not stop the project build. It may have already finished.',
+        color: 'red'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resume a stopped project build
+  const handleResumeBuild = async () => {
+    if (!projectId) return;
+    
+    try {
+      setLoading(true);
+      const response = await axios.post(`/project/resume/${projectId}`);
+      
+      notifications.show({
+        title: 'Build Resuming',
+        message: 'The project build is being resumed from where it left off.',
+        color: 'blue'
+      });
+      
+      // Force a status check to update the UI
+      checkProjectStatus();
+    } catch (err) {
+      console.error('Error resuming project:', err);
+      notifications.show({
+        title: 'Resume Failed',
+        message: err.response?.data?.detail || 'Could not resume the project build.',
+        color: 'red'
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -689,6 +759,30 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
                     Refresh
                   </Button>
                   
+                  {projectStatus && projectStatus.status === 'in_progress' && (
+                    <Button 
+                      variant="filled" 
+                      color="red"
+                      leftIcon={<IconPlayerStop size={16} />}
+                      onClick={handleStopBuild}
+                      disabled={loading}
+                    >
+                      Stop Build
+                    </Button>
+                  )}
+                  
+                  {projectStatus && projectStatus.status === 'stopped' && (
+                    <Button 
+                      variant="filled" 
+                      color="green"
+                      leftIcon={<IconPlayerPlay size={16} />}
+                      onClick={handleResumeBuild}
+                      disabled={loading}
+                    >
+                      Resume Build
+                    </Button>
+                  )}
+                  
                   <Button
                     variant="outline"
                     leftIcon={<IconArrowRight size={16} />}
@@ -704,11 +798,13 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
                   <Group mb="md">
                     <Badge 
                       color={projectStatus.status === 'complete' ? 'green' : 
-                            projectStatus.status === 'error' ? 'red' : 'blue'} 
+                            projectStatus.status === 'error' ? 'red' : 
+                            projectStatus.status === 'stopped' ? 'yellow' : 'blue'} 
                       size="lg"
                     >
                       {projectStatus.status === 'complete' ? 'Complete' : 
-                       projectStatus.status === 'error' ? 'Error' : 'In Progress'}
+                       projectStatus.status === 'error' ? 'Error' : 
+                       projectStatus.status === 'stopped' ? 'Stopped' : 'In Progress'}
                     </Badge>
                     
                     <Text size="sm">Project ID: {projectId}</Text>

@@ -13,6 +13,9 @@ import json
 import shutil
 import zipfile
 from fastapi.responses import FileResponse
+import re
+import sys
+import threading
 
 # Import the AIOrchestrator
 from ai_clients import AIOrchestrator
@@ -42,6 +45,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 RATE_LIMIT_STANDARD = 10  # requests per minute for standard tier
 RATE_LIMIT_PREMIUM = 30   # requests per minute for premium tier
 user_request_counts = {}  # Track user requests
+
+# Global dictionary to track active build processes
+active_build_processes = {}
 
 # Models for request/response
 class TokenData(BaseModel):
@@ -658,6 +664,12 @@ async def build_project(
         thread.daemon = True
         thread.start()
         
+        # Track the thread in our active processes dictionary
+        active_build_processes[request_id] = {
+            "thread": thread,
+            "start_time": datetime.utcnow()
+        }
+        
         # Start the status update thread
         status_thread = threading.Thread(target=update_status_periodically)
         status_thread.daemon = True
@@ -862,6 +874,419 @@ async def download_project(
         media_type="application/zip",
         filename=f"project_{project_id}.zip"
     )
+
+@app.post("/project/stop/{project_id}")
+async def stop_project_build(
+    project_id: str,
+    user: User = Depends(get_current_active_user)
+):
+    """
+    Stop a running project build process.
+    
+    Args:
+        project_id: ID of the project to stop
+        
+    Returns:
+        JSON response indicating success or failure
+    """
+    try:
+        # Check if the project exists
+        project_dir = os.path.join("projects", user.username)
+        project_file = os.path.join(project_dir, f"{project_id}.json")
+        
+        if not os.path.exists(project_file):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project with ID {project_id} not found"
+            )
+        
+        # Check if we have a thread for this project
+        if project_id not in active_build_processes:
+            # Update the status file to indicate stopped even if we don't have a thread
+            status_path = os.path.join("generated_project", "status.json")
+            if os.path.exists(status_path):
+                try:
+                    with open(status_path, 'r') as f:
+                        status_data = json.load(f)
+                    
+                    # Only update if it's still in progress
+                    if status_data.get("status") == "in_progress":
+                        status_data["status"] = "stopped"
+                        status_data.setdefault("progress_updates", []).append({
+                            "time": datetime.utcnow().isoformat(),
+                            "message": "Project build stopped by user"
+                        })
+                        
+                        with open(status_path, 'w') as f:
+                            json.dump(status_data, f, indent=2)
+                except Exception as e:
+                    print(f"Error updating status file: {e}")
+            
+            return {
+                "success": True,
+                "message": "Project was not running or has already completed"
+            }
+        
+        # Get the thread and set a flag to stop it
+        # We'll use an environment variable to signal the build process to stop
+        # This allows us to stop the build without directly terminating threads
+        os.environ[f"STOP_BUILD_{project_id}"] = "true"
+        
+        # Update the status file
+        status_path = os.path.join("generated_project", "status.json")
+        if os.path.exists(status_path):
+            try:
+                with open(status_path, 'r') as f:
+                    status_data = json.load(f)
+                
+                status_data["status"] = "stopped"
+                status_data.setdefault("progress_updates", []).append({
+                    "time": datetime.utcnow().isoformat(),
+                    "message": "Project build stopped by user"
+                })
+                
+                with open(status_path, 'w') as f:
+                    json.dump(status_data, f, indent=2)
+            except Exception as e:
+                print(f"Error updating status file: {e}")
+        
+        # Remove the build process from our tracking dictionary
+        thread_info = active_build_processes.pop(project_id, None)
+        
+        return {
+            "success": True,
+            "message": "Project build stopping"
+        }
+    
+    except Exception as e:
+        print(f"Error stopping project build: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error stopping project build: {str(e)}"
+        )
+
+@app.post("/project/resume/{project_id}")
+async def resume_project_build(
+    project_id: str,
+    user: User = Depends(get_current_active_user)
+):
+    """
+    Resume a stopped project build process.
+    
+    Args:
+        project_id: ID of the project to resume
+        
+    Returns:
+        JSON response indicating success or failure
+    """
+    try:
+        # Check if the project exists
+        project_dir = os.path.join("projects", user.username)
+        project_file = os.path.join(project_dir, f"{project_id}.json")
+        
+        if not os.path.exists(project_file):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project with ID {project_id} not found"
+            )
+        
+        # Check if the project is actually stopped
+        status_path = os.path.join("generated_project", "status.json")
+        if not os.path.exists(status_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Project status file not found"
+            )
+            
+        try:
+            with open(status_path, 'r') as f:
+                status_data = json.load(f)
+                
+            if status_data.get("status") != "stopped":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Project is not in a stopped state (current state: {status_data.get('status')})"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error reading project status: {str(e)}"
+            )
+        
+        # Update the status to in_progress
+        status_data["status"] = "in_progress"
+        status_data.setdefault("progress_updates", []).append({
+            "time": datetime.utcnow().isoformat(),
+            "message": "Project build resumed by user"
+        })
+        
+        with open(status_path, 'w') as f:
+            json.dump(status_data, f, indent=2)
+        
+        # Start a new build thread
+        def build_project_thread():
+            try:
+                # Analyze existing project files to determine where to start
+                start_step = 1
+                start_substep = None
+                doc_dir = os.path.join("generated_project", "doc")
+                
+                # Detect the current progress by examining existing files
+                if os.path.exists(doc_dir):
+                    # Check for the most advanced step file
+                    step_files = []
+                    for file in os.listdir(doc_dir):
+                        if file.startswith("STEP") and file.endswith(".md"):
+                            step_files.append(file)
+                    
+                    if step_files:
+                        # Sort files to find the latest step/substep
+                        step_files.sort()
+                        latest_file = step_files[-1]
+                        print(f"Found latest step file: {latest_file}")
+                        
+                        # Parse step/substep from filename (e.g., STEP3_SUBSTEP_3B.md)
+                        try:
+                            if "_SUBSTEP_" in latest_file:
+                                step_part = latest_file.split("_SUBSTEP_")[0].replace("STEP", "")
+                                substep_part = latest_file.split("_SUBSTEP_")[1].split(".")[0]
+                                
+                                # Extract step number and substep letter
+                                start_step = int(step_part)
+                                if substep_part:
+                                    # Get just the letter part (e.g., "3B" -> "B")
+                                    letter = ''.join([c for c in substep_part if c.isalpha()])
+                                    if letter:
+                                        start_substep = letter
+                                        # Move to next substep
+                                        import string
+                                        alphabet = string.ascii_uppercase
+                                        next_idx = alphabet.index(letter) + 1
+                                        if next_idx < len(alphabet):
+                                            start_substep = alphabet[next_idx]
+                            elif "STEP" in latest_file:
+                                # Just has step number
+                                step_num = int(''.join(filter(str.isdigit, latest_file)))
+                                start_step = step_num + 1  # Move to next step
+                                
+                            print(f"Will resume from step {start_step}{start_substep or ''}")
+                        except Exception as e:
+                            print(f"Error parsing step files: {e}, starting from the beginning")
+                            start_step = 1
+                            start_substep = None
+                    
+                    # Check if implementation has started
+                    if os.path.exists(os.path.join(doc_dir, "IMPLEMENTATION.md")) or os.path.exists(os.path.join(doc_dir, "project_complete.flag")):
+                        print("Project appears to be complete, running syntax check only")
+                        run_syntax_check_only = True
+                    else:
+                        run_syntax_check_only = False
+                else:
+                    # No doc directory, start from the beginning
+                    start_step = 1
+                    start_substep = None
+                    run_syntax_check_only = False
+                
+                # Clear any previous stop signal
+                if f"STOP_BUILD_{project_id}" in os.environ:
+                    del os.environ[f"STOP_BUILD_{project_id}"]
+                
+                # Load project details
+                with open(project_file, 'r') as f:
+                    project_data = json.load(f)
+                
+                # Import directly from project_builder to avoid the orchestrator wrapper
+                import project_builder
+                
+                # Call the function directly with the correct parameter signature and determined starting point
+                project_builder.run_project_builder(
+                    vision=project_data.get("user_prompt", ""),
+                    model_name=project_data.get("model", "deepseekr1"),
+                    start_step=start_step,
+                    start_substep=start_substep,
+                    run_syntax_check_only=run_syntax_check_only
+                )
+                
+                # Wait a moment to ensure file operations are complete
+                time.sleep(2)
+                
+                # Check for proper project completion
+                completion_indicators = [
+                    os.path.exists(doc_dir),  # Doc directory exists
+                    os.path.exists(os.path.join("generated_project", "doc", "project_complete.flag")) or  # Flag file
+                    os.path.exists(os.path.join("generated_project", "doc", "SUMMARY.md")) or  # Summary file
+                    len([f for f in os.listdir("generated_project") if f.endswith('.md') or f.endswith('.py') or f.endswith('.js')]) > 0  # Any content files
+                ]
+                
+                if not all(completion_indicators[:1]) or not any(completion_indicators[1:]):
+                    # If primary indicators are missing, wait a bit longer and check again
+                    time.sleep(5)
+                    completion_indicators = [
+                        os.path.exists(doc_dir),
+                        os.path.exists(os.path.join("generated_project", "doc", "project_complete.flag")) or
+                        os.path.exists(os.path.join("generated_project", "doc", "SUMMARY.md")) or
+                        len([f for f in os.listdir("generated_project") if f.endswith('.md') or f.endswith('.py') or f.endswith('.js')]) > 0
+                    ]
+                    
+                    if not all(completion_indicators[:1]) or not any(completion_indicators[1:]):
+                        raise Exception("Project generation incomplete - missing expected output files")
+                
+                # Count total files as a metric
+                total_files = sum([len(files) for _, _, files in os.walk("generated_project")])
+                
+                # Create a status file in the generated_project directory
+                status_data = {
+                    "status": "complete",
+                    "project_id": project_id,
+                    "user": user.username,
+                    "completed_at": datetime.utcnow().isoformat(),
+                    "model": project_data.get("model", "deepseekr1"),
+                    "file_count": total_files,
+                    "total_duration_minutes": round((datetime.utcnow() - datetime.fromisoformat(project_data.get("generated_at", datetime.utcnow().isoformat()))).total_seconds() / 60, 1)
+                }
+                
+                # Preserve progress updates from previous status
+                try:
+                    with open(status_path, 'r') as f:
+                        old_status = json.load(f)
+                        if "progress_updates" in old_status:
+                            status_data["progress_updates"] = old_status["progress_updates"]
+                except:
+                    pass
+                
+                # Add final update
+                status_data.setdefault("progress_updates", []).append({
+                    "time": datetime.utcnow().isoformat(),
+                    "message": f"Project completed successfully with {total_files} files"
+                })
+                
+                with open(status_path, "w") as f:
+                    json.dump(status_data, f, indent=2)
+                
+                print(f"Project {project_id} completed successfully with {total_files} files")
+                    
+            except Exception as e:
+                print(f"Error in project building thread: {e}")
+                # Update status on error
+                try:
+                    # Get current status to preserve progress updates
+                    try:
+                        with open(status_path, 'r') as f:
+                            status_data = json.load(f)
+                    except:
+                        status_data = {
+                            "progress_updates": []
+                        }
+                    
+                    # Update with error information
+                    status_data.update({
+                        "status": "error",
+                        "project_id": project_id,
+                        "error": str(e),
+                        "user": user.username,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                    
+                    # Add error to progress updates
+                    status_data.setdefault("progress_updates", []).append({
+                        "time": datetime.utcnow().isoformat(),
+                        "message": f"Error: {str(e)}"
+                    })
+                    
+                    with open(status_path, "w") as f:
+                        json.dump(status_data, f, indent=2)
+                except Exception as inner_e:
+                    print(f"Failed to update status with error: {inner_e}")
+                    pass
+        
+        # Start the build thread
+        thread = threading.Thread(target=build_project_thread)
+        thread.daemon = True
+        thread.start()
+        
+        # Track the thread in our active processes dictionary
+        active_build_processes[project_id] = {
+            "thread": thread,
+            "start_time": datetime.utcnow()
+        }
+        
+        # Start the status update thread
+        def update_status_periodically():
+            try:
+                # Update status every minute while the build is running
+                counter = 0
+                while True:
+                    counter += 1
+                    time.sleep(60)  # 1 minute
+                    
+                    # Check if the project has completed or errored out
+                    try:
+                        with open(status_path, 'r') as f:
+                            current_status = json.load(f)
+                            if current_status.get("status") in ["complete", "error", "stopped"]:
+                                break
+                    except:
+                        pass
+                    
+                    # Update the status with a new progress message
+                    try:
+                        with open(status_path, 'r') as f:
+                            status_data = json.load(f)
+                        
+                        # Count files in the project directory
+                        files_count = 0
+                        doc_files = []
+                        for root, dirs, files in os.walk("generated_project"):
+                            files_count += len(files)
+                            if root.endswith("doc"):
+                                doc_files = files
+                        
+                        # Determine the current phase based on doc files
+                        phase_description = "initial planning"
+                        if any(f.startswith("STEP3") for f in doc_files):
+                            phase_description = "module design"
+                        elif any(f.startswith("STEP2") for f in doc_files):
+                            phase_description = "system architecture"
+                        elif any(f.startswith("STEP1") for f in doc_files):
+                            phase_description = "project planning"
+                        
+                        if "IMPLEMENTATION.md" in doc_files:
+                            phase_description = "final implementation stages"
+                        
+                        # Update step_info if it exists
+                        if "step_info" in status_data:
+                            status_data["step_info"]["description"] = f"Working on {phase_description}"
+                        
+                        # Add new progress update
+                        status_data.setdefault("progress_updates", []).append({
+                            "time": datetime.utcnow().isoformat(),
+                            "message": f"Working on {phase_description} ({counter} minutes elapsed)",
+                            "files_found": files_count
+                        })
+                        
+                        with open(status_path, 'w') as f:
+                            json.dump(status_data, f, indent=2)
+                    except Exception as e:
+                        print(f"Error updating status: {e}")
+            except Exception as e:
+                print(f"Status update thread error: {e}")
+        
+        status_thread = threading.Thread(target=update_status_periodically)
+        status_thread.daemon = True
+        status_thread.start()
+        
+        return {
+            "success": True,
+            "message": "Project build resumed",
+            "project_id": project_id
+        }
+    
+    except Exception as e:
+        print(f"Error resuming project build: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error resuming project build: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
