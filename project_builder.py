@@ -887,14 +887,34 @@ def generate_structure_script(structure_content: str, output_script_path: str, o
             
             # Use the orchestrator to generate the script
             system_prompt = "You are an expert in bash scripting. Your task is to convert a project structure description into a bash script that creates all directories and files. IMPORTANT: Use only ASCII characters in your script (no Unicode special characters)."
+            
+            print("Calling model to generate script...")
             script_content = orchestrator.call_llm(system_prompt, prompt, max_tokens=8000, temperature=0.2)
             
+            # Log the raw response for debugging
+            print(f"Raw script content length: {len(script_content or '')}")
+            if script_content:
+                # Print the first few lines to see what we're getting
+                preview_lines = script_content.split('\n')[:10]
+                print("Script content preview (first 10 lines):")
+                for line in preview_lines:
+                    print(f"  > {line}")
+            else:
+                print("WARNING: Script content is None or empty!")
+            
             # Sanitize the content to remove any potentially problematic characters
-            script_content = ''.join(char for char in script_content if ord(char) < 128)
+            if script_content:
+                script_content = ''.join(char for char in script_content if ord(char) < 128)
             
             # Verify that the script is not empty or too short
             if not script_content or len(script_content.strip()) < 50:
                 print(f"⚠️ Generated script is too short or empty. Retrying ({retry_count + 1}/{max_retries})...")
+                retry_count += 1
+                continue
+            
+            # Check for required bash commands
+            if "mkdir" not in script_content or "touch" not in script_content:
+                print(f"⚠️ Generated script is missing essential commands (mkdir/touch). Retrying ({retry_count + 1}/{max_retries})...")
                 retry_count += 1
                 continue
             
@@ -930,6 +950,7 @@ echo "Creating project structure in: $(pwd)"
             
         except UnicodeEncodeError as e:
             print(f"⚠️ Character encoding error during script generation: {str(e)}")
+            print(f"Error details: {e.__class__.__name__}, encoding: {e.encoding}, object: {repr(e.object[:50])}...")
             print(f"Retrying ({retry_count + 1}/{max_retries})...")
             retry_count += 1
             

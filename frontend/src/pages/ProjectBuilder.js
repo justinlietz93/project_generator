@@ -24,7 +24,11 @@ import {
   Card,
   Anchor,
   Modal,
-  Tabs
+  Tabs,
+  TextInput,
+  Space,
+  Checkbox,
+  NumberInput
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useAuth } from '../context/AuthContext';
@@ -54,6 +58,7 @@ const ProjectBuilder = () => {
   const [projectDescription, setProjectDescription] = useState('');
   const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [resumeModel, setResumeModel] = useState('');  // Model to use when resuming
   const [loading, setLoading] = useState(false);
   const [refiningPrompt, setRefiningPrompt] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -433,17 +438,21 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
     }
   };
 
-  // Resume a stopped project build
+  // Resume a stopped project
   const handleResumeBuild = async () => {
     if (!projectId) return;
     
     try {
       setLoading(true);
-      const response = await axios.post(`/project/resume/${projectId}`);
+      const response = await axios.post(`/project/resume/${projectId}`, {
+        model: resumeModel || projectStatus.model // Use the selected resume model or fall back to original
+      });
       
       notifications.show({
         title: 'Build Resuming',
-        message: 'The project build is being resumed from where it left off.',
+        message: resumeModel 
+          ? `The project build is being resumed with model: ${resumeModel}`
+          : 'The project build is being resumed from where it left off.',
         color: 'blue'
       });
       
@@ -771,18 +780,6 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
                     </Button>
                   )}
                   
-                  {projectStatus && projectStatus.status === 'stopped' && (
-                    <Button 
-                      variant="filled" 
-                      color="green"
-                      leftIcon={<IconPlayerPlay size={16} />}
-                      onClick={handleResumeBuild}
-                      disabled={loading}
-                    >
-                      Resume Build
-                    </Button>
-                  )}
-                  
                   <Button
                     variant="outline"
                     leftIcon={<IconArrowRight size={16} />}
@@ -828,6 +825,39 @@ IMPORTANT: Your response should be focused on creating a better prompt, not solv
                     <Text size="sm" mb="md">
                       Total build time: {projectStatus.step_info.total_duration_minutes} minutes
                     </Text>
+                  )}
+                  
+                  {/* Show model switching UI when project is stopped */}
+                  {projectStatus.status === 'stopped' && (
+                    <Paper p="xs" withBorder mb="md">
+                      <Title order={5} mb="xs">Resume with Different Model</Title>
+                      <Text size="sm" mb="md" color="dimmed">
+                        If you encountered issues with the current model ({projectStatus.model || "unknown"}), 
+                        you can try a different one.
+                      </Text>
+                      <Group position="apart" align="flex-end">
+                        <Select
+                          label="Select Model"
+                          placeholder={projectStatus.model || "Choose a model"}
+                          data={availableModels.map(model => typeof model === 'string' ? 
+                            { value: model, label: model } : 
+                            { value: model.id || model.toString(), label: model.name || model.toString() }
+                          )}
+                          value={resumeModel}
+                          onChange={setResumeModel}
+                          style={{ minWidth: 200 }}
+                        />
+                        <Button 
+                          variant="filled" 
+                          color="green"
+                          leftIcon={<IconPlayerPlay size={16} />}
+                          onClick={handleResumeBuild}
+                          disabled={loading}
+                        >
+                          Resume Build
+                        </Button>
+                      </Group>
+                    </Paper>
                   )}
                   
                   {/* Error message if there was an error */}

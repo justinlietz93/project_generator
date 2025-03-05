@@ -285,7 +285,7 @@ async def generate_ai_response(
     try:
         # Initialize the orchestrator with the requested model
         orchestrator = AIOrchestrator(request.model)
-        
+            
         # Call the LLM
         response = orchestrator.call_llm(
             system_prompt=request.system_prompt,
@@ -551,8 +551,6 @@ async def build_project(
                 import project_builder
                 
                 # Call the function directly with the correct parameter signature and determined starting point
-                # The signature in project_builder.py is:
-                # run_project_builder(vision: str, model_name: str, start_step: int = 1, start_substep: str = None, run_syntax_check_only: bool = False)
                 project_builder.run_project_builder(
                     vision=request.user_prompt,
                     model_name=request.model,
@@ -683,7 +681,7 @@ async def build_project(
             "tokens_used": 0,  # Initial token usage
             "response": "Project build initiated"
         }
-    
+        
     except Exception as e:
         print(f"Error starting project build: {e}")
         raise HTTPException(
@@ -965,9 +963,13 @@ async def stop_project_build(
             detail=f"Error stopping project build: {str(e)}"
         )
 
+class ResumeProjectRequest(BaseModel):
+    model: Optional[str] = None
+
 @app.post("/project/resume/{project_id}")
 async def resume_project_build(
     project_id: str,
+    request: Optional[ResumeProjectRequest] = None,
     user: User = Depends(get_current_active_user)
 ):
     """
@@ -975,6 +977,7 @@ async def resume_project_build(
     
     Args:
         project_id: ID of the project to resume
+        request: Optional request containing model to use when resuming
         
     Returns:
         JSON response indicating success or failure
@@ -1013,11 +1016,27 @@ async def resume_project_build(
                 detail=f"Error reading project status: {str(e)}"
             )
         
+        # Load the project data
+        with open(project_file, 'r') as f:
+            project_data = json.load(f)
+        
+        # Get the model to use - either from the request or fall back to the original
+        model_name = project_data.get("model", "deepseekr1")
+        
+        # If a new model was specified in the request, use that instead
+        if request and request.model:
+            model_name = request.model
+            # Update the project data with the new model
+            project_data["model"] = model_name
+            with open(project_file, 'w') as f:
+                json.dump(project_data, f, indent=2)
+        
         # Update the status to in_progress
         status_data["status"] = "in_progress"
+        status_data["model"] = model_name  # Ensure status reflects the current model
         status_data.setdefault("progress_updates", []).append({
             "time": datetime.utcnow().isoformat(),
-            "message": "Project build resumed by user"
+            "message": f"Project build resumed by user with model: {model_name}"
         })
         
         with open(status_path, 'w') as f:
@@ -1101,7 +1120,7 @@ async def resume_project_build(
                 # Call the function directly with the correct parameter signature and determined starting point
                 project_builder.run_project_builder(
                     vision=project_data.get("user_prompt", ""),
-                    model_name=project_data.get("model", "deepseekr1"),
+                    model_name=model_name,
                     start_step=start_step,
                     start_substep=start_substep,
                     run_syntax_check_only=run_syntax_check_only
@@ -1286,7 +1305,7 @@ async def resume_project_build(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resuming project build: {str(e)}"
-        )
+    )
 
 if __name__ == "__main__":
     import uvicorn
