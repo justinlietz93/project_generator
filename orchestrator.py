@@ -38,7 +38,21 @@ PROJECT_DIR = "some_project"
 #     print("python-dotenv not installed. Environment variables must be set manually.")
 
 from ai_clients import AIOrchestrator
-from utils import ProjectFile, SubStep, read_project_files, write_project_file, parse_ai_response_and_apply
+from utils import read_project_files, write_project_file, parse_ai_response_and_apply
+
+# Add dependency tracking imports if they don't exist
+try:
+    # Import dependency tracking if available, but don't fail if not
+    from dependency_tracker import DependencyResolver
+    from dependency_integration import (
+        initialize_dependency_tracking, 
+        restore_original_functions,
+        perform_final_dependency_check,
+        fix_existing_project_dependencies
+    )
+    DEPENDENCY_TRACKING_AVAILABLE = True
+except ImportError:
+    DEPENDENCY_TRACKING_AVAILABLE = False
 
 class ProjectFile:
     def __init__(self, path: str, content: str):
@@ -51,33 +65,6 @@ class SubStep:
         self.id = id           # Identifier, e.g. "1A"
         self.name = name       # Name of the sub-step
         self.prompt = prompt   # Specific prompt template for this sub-step
-
-def read_project_files(project_root: str) -> Dict[str, "ProjectFile"]:
-    """
-    Reads text files from project_root, ignoring .git or obvious binaries.
-    Returns a dict: { "relative/path": ProjectFile(...) }
-    """
-    file_map = {}
-    root = Path(project_root)
-    if not root.is_dir():
-        print(f"Warning: {project_root} is not a directory.")
-        return file_map
-
-    for p in root.rglob("*"):
-        if p.is_file():
-            # Use Path's methods to get platform-independent relative path
-            rel_path = str(p.relative_to(root))
-            # skip .git or some binaries
-            if ".git" in rel_path:
-                continue
-            if p.suffix in [".png", ".jpg", ".exe", ".dll"]:
-                continue
-            try:
-                content = p.read_text(encoding="utf-8")
-                file_map[rel_path] = ProjectFile(rel_path, content)
-            except Exception as e:
-                print(f"Skipping {rel_path}: {e}")
-    return file_map
 
 def write_project_file(project_root: str, pf: ProjectFile):
     """
@@ -108,62 +95,6 @@ def write_project_file(project_root: str, pf: ProjectFile):
         print(f"ERROR writing to {target}: {str(e)}")
         import traceback
         traceback.print_exc()
-
-def parse_ai_response_and_apply(ai_text: str, file_map: Dict[str, ProjectFile]):
-    """
-    Looks for lines of the form:
-      === File: path/to/file ===
-      (some content)
-
-    Then we store that content in file_map[path].
-    If path not in file_map, we create a new entry (new file).
-    Makes sure to normalize paths for cross-platform compatibility.
-    """
-    if not ai_text or ai_text.startswith("ERROR from"):
-        print("Warning: AI response contains an error or is empty. Cannot parse file markers.")
-        return
-        
-    lines = ai_text.splitlines()
-    if not lines:
-        print("Warning: AI response has no content lines to parse.")
-        return
-        
-    current_file = None
-    content_buffer: List[str] = []
-    files_found = 0
-
-    def commit_file():
-        nonlocal current_file, content_buffer, files_found
-        if current_file:
-            # Normalize path separators for cross-platform compatibility
-            normalized_path = current_file.replace('/', os.path.sep)
-            if normalized_path not in file_map:
-                # Create a new entry if it doesn't exist
-                file_map[normalized_path] = ProjectFile(normalized_path, "")
-            file_map[normalized_path].content = "\n".join(content_buffer)
-            print(f"DEBUG: Processed file {normalized_path} with {len(content_buffer)} lines")
-            files_found += 1
-
-    for line in lines:
-        if line.startswith("=== File: "):
-            # commit previous file
-            commit_file()
-            # Extract the file path, properly trimming any trailing === markers
-            file_marker = line.replace("=== File: ", "", 1).strip()
-            if file_marker.endswith(" ==="):
-                file_marker = file_marker[:-4].strip()
-            current_file = file_marker
-            content_buffer = []
-        else:
-            # accumulate lines for this file
-            content_buffer.append(line)
-
-    # commit last file
-    commit_file()
-    
-    if files_found == 0:
-        print("Warning: No file markers found in AI response. This may indicate formatting issues.")
-        print("AI response excerpt (first 200 chars):", ai_text[:200] + "..." if len(ai_text) > 200 else ai_text)
 
 def run_project_builder(model_name: str, vision: str = None, auto_yes: bool = False, start_step: int = 1, start_substep: str = None):
     """
@@ -376,12 +307,32 @@ This ensures cross-platform compatibility.""")
     parser.add_argument('--start-substep', type=str, help='Substep ID to start from (e.g. "B")')
     parser.add_argument('--syntax-check', action='store_true', help='Run syntax checking on the generated project files')
     parser.add_argument('--disable-syntax-check', action='store_true', help='Disable automatic syntax checking during build')
+    parser.add_argument('--track-dependencies', action='store_true',
+                       help='Track and fix dependencies between files during project generation')
     parser.add_argument('model', choices=['claude37sonnet', 'deepseekr1'], 
                       help='Which LLM to use (claude37sonnet or deepseekr1)')
     parser.add_argument('domain', nargs='?', default=None, 
                       help='Domain/challenge to explore')
     
+    # Create subparsers for different commands
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+    
+    # Add 'fix-dependencies' subcommand
+    fix_deps_parser = subparsers.add_parser('fix-dependencies', help='Fix dependencies in an existing project')
+    fix_deps_parser.add_argument('project_dir', help='Path to the project directory')
+    fix_deps_parser.add_argument('--model', default='claude37sonnet', help='LLM model to use')
+    
+    # Parse arguments
     args = parser.parse_args()
+    
+    # Check which command to run
+    if args.command == 'fix-dependencies':
+        if DEPENDENCY_TRACKING_AVAILABLE:
+            return run_fix_dependencies_command(args)
+        else:
+            print("Error: Dependency tracking is not available. Please install the required modules.")
+            return 1
+    
     auto_yes = args.auto_yes
     generate_proposal = args.generate_proposal
     build_mode = args.build
@@ -395,6 +346,28 @@ This ensures cross-platform compatibility.""")
     
     # Check if domain/challenge was provided as a command line argument
     user_vision = args.domain
+
+    # Initialize dependency tracking if requested before we use any of the dependency-related functions
+    if args.track_dependencies and DEPENDENCY_TRACKING_AVAILABLE:
+        print("Initializing dependency tracking...")
+        try:
+            # Import project_builder module if not already imported
+            import project_builder
+            
+            # Define variables for original functions
+            original_implement_single_file = None
+            original_prioritize_files = None
+            
+            # Set up a dependency resolver
+            resolver = initialize_dependency_tracking(project_builder, PROJECT_DIR)
+            
+            # Store original functions for later restoration
+            original_implement_single_file = project_builder.implement_single_file
+            original_prioritize_files = project_builder.prioritize_files
+            
+        except ImportError:
+            print("Warning: Could not find project_builder module for dependency tracking")
+            # Fall back to minimal dependency tracking without function patching
 
     # Run the appropriate mode based on flags
     if workflow_type:
@@ -547,6 +520,8 @@ This ensures cross-platform compatibility.""")
     # Continue with normal initialization
     Path(PROJECT_DIR).mkdir(exist_ok=True)
     Path(PROJECT_DIR).joinpath("doc").mkdir(exist_ok=True)
+    
+    # Read project files after initializing dependency tracking
     file_map = read_project_files(PROJECT_DIR)
 
     # We'll store step outputs to feed them as context into subsequent steps
@@ -1063,6 +1038,17 @@ This ensures cross-platform compatibility.""")
     if generate_proposal:
         run_ai_proposal_generator(model_name)
 
+    # Add post-generation dependency check if tracking was enabled
+    if args.track_dependencies and DEPENDENCY_TRACKING_AVAILABLE and result:
+        try:
+            perform_final_dependency_check(PROJECT_DIR, orchestrator, model_name)
+        except Exception as e:
+            print(f"Error during dependency check: {e}")
+            import traceback
+            traceback.print_exc()
+
+    return True
+
 def extract_file_paths_from_structure(structure_file):
     """Extract file paths from the project structure file"""
     if not structure_file:
@@ -1198,6 +1184,14 @@ def build_from_file(model_name, file_path, start_step=None, start_substep=None, 
         step_outputs=step_outputs
     )
 
+    # Check dependencies after completion if requested
+    if track_dependencies and DEPENDENCY_TRACKING_AVAILABLE and result:
+        from ai_clients import AIOrchestrator
+        orchestrator = AIOrchestrator(model_name)
+        perform_final_dependency_check(PROJECT_DIR, orchestrator, model_name)
+
+    return result
+
 def run_project_builder(vision, model_name, start_step=1, start_substep=None, step_outputs=None):
     """Run the project builder."""
     from project_builder import run_project_builder
@@ -1214,6 +1208,268 @@ def run_project_builder(vision, model_name, start_step=1, start_substep=None, st
         start_substep=start_substep,
         existing_step_outputs=step_outputs
     )
+
+    # Check dependencies after completion if requested
+    if track_dependencies and DEPENDENCY_TRACKING_AVAILABLE and result:
+        perform_final_dependency_check(PROJECT_DIR, orchestrator, model_name)
+
+    return result
+
+def run_fix_dependencies_command(args):
+    """Fix dependencies in an existing project"""
+    if not os.path.exists(args.project_dir):
+        print(f"Error: Project directory {args.project_dir} does not exist.")
+        return False
+    
+    print(f"Fixing dependencies in project: {args.project_dir}")
+    
+    # Get the file map
+    from utils import read_project_files, write_project_file, parse_ai_response_and_apply
+    file_map = read_project_files(args.project_dir)
+    
+    # Initialize the resolver
+    resolver = DependencyResolver(args.project_dir)
+    resolver.initialize(file_map)
+    
+    # Check for unresolved dependencies
+    if not resolver.perform_final_check(file_map):
+        print("\n⚠️ Found dependency issues. Starting iterative fix process.")
+        
+        # Define fix function using our AI orchestrator
+        def fix_with_ai(file_path, fix_prompt, file_content):
+            """Use the AI to fix dependency issues"""
+            from ai_orchestrator import AIOrchestrator
+            fix_orchestrator = AIOrchestrator(args.model)
+            
+            system_prompt = """You are an expert software engineer fixing dependency issues.
+Your task is to update the file to resolve any dependency issues while maintaining its functionality.
+Focus specifically on fixing import statements and module references.
+
+IMPORTANT GUIDELINES:
+1. Provide the COMPLETE updated file content, not just the changes
+2. Make minimal changes needed to fix the dependency issues
+3. Output the entire fixed file content inside === File: path/to/file === markers
+4. Be consistent with the project's module structure and naming conventions"""
+            
+            response = fix_orchestrator.call_llm(system_prompt, fix_prompt, temperature=0.0)
+            
+            # Process the response
+            fixed_files = {}
+            parse_ai_response_and_apply(response, fixed_files)
+            
+            # Return the fixed content or original if parsing failed
+            if file_path in fixed_files and hasattr(fixed_files[file_path], 'content'):
+                return fixed_files[file_path].content
+            print(f"⚠️ Failed to parse AI response for {file_path}. Keeping original content.")
+            return file_content
+        
+        # Perform iterative dependency resolution
+        success = resolver.iterate_fixes(file_map, fix_with_ai)
+        
+        # Write the updated files
+        for file_path, file_obj in file_map.items():
+            write_project_file(args.project_dir, file_obj)
+        
+        if success:
+            print("\n✅ All dependencies have been resolved successfully!")
+        else:
+            print("\n⚠️ Some dependencies could not be resolved. Check the dependency report.")
+        
+        # Generate a final report
+        report_path = os.path.join(args.project_dir, "dependency_report.md")
+        from dependency_tracker import generate_dependency_report
+        generate_dependency_report(report_path)
+        print(f"📊 Dependency report saved to: {report_path}")
+    else:
+        print("\n✅ All dependencies are already resolved! Your project is ready to run.")
+    
+    return True
+
+def run_build_command(args):
+    """Run the project building process"""
+    # Extract any other arguments needed
+    model_name = args.model
+    vision = args.vision
+    
+    # Store original functions before monkey patching
+    if args.track_dependencies:
+        import project_builder
+        original_implement_single_file = project_builder.implement_single_file
+        original_prioritize_files = project_builder.prioritize_files
+        
+        print("🔍 Dependency tracking enabled. Dependencies will be tracked and fixed during generation.")
+        
+        # Create dependency-aware versions of key functions
+        def dependency_aware_implement(file_path, structure_content, step_outputs, orchestrator, model_name, file_map):
+            """Enhance file implementation with dependency tracking"""
+            # Get project directory
+            project_dir = project_builder.PROJECT_DIR
+            
+            # Get or create resolver
+            resolver = DependencyResolver(project_dir)
+            
+            # Build the original file implementation prompt
+            original_file_prompt = f"""# File Implementation: {file_path}
+
+IMPORTANT: You are implementing a production-ready source file that must be complete,
+robust, and maintainable. Minimal or superficial implementations are not acceptable.
+
+CRITICAL: DO NOT WRITE DEMONSTRATION CODE. Write REAL, FUNCTIONAL code that would
+actually be used in a production environment. Your code will be saved directly to a file
+and is expected to work without modification.
+
+## Project Context
+{step_outputs.get('vision', '(No vision provided)')}
+
+## Project Structure
+The file is part of the following project structure:
+```
+{structure_content[:2000]}  # Include first 2000 chars of the structure
+```
+
+## Relevant Architecture & Design
+{step_outputs.get(2, '(No architecture)')[:1000]}  # Only first 1000 chars of architecture
+{step_outputs.get(3, '(No structure)')[:1000]}     # Only first 1000 chars of structure
+
+## Implementation Task
+Your task is to implement: {file_path}
+
+## Implementation Requirements
+1. Code Quality:
+   - Production-ready, professional code
+   - Comprehensive error handling
+   - Complete input validation
+   - Proper logging
+   - Thorough documentation
+   - Clear code organization
+
+2. Technical Requirements:
+   - Follow all architectural decisions
+   - Implement complete functionality
+   - Include ALL necessary imports
+   - Handle ALL edge cases
+   - Include proper error messages
+   - Add debug logging where appropriate
+
+3. Documentation Requirements:
+   - File-level documentation
+   - Function/class documentation
+   - Important code block documentation
+   - Usage examples in comments
+   - Edge case documentation
+   - Error handling documentation
+
+4. Testing Considerations:
+   - Make code testable
+   - Document test scenarios
+   - Handle boundary conditions
+   - Consider error scenarios
+
+5. Security & Robustness:
+   - Implement security best practices
+   - Handle resource cleanup
+   - Prevent memory leaks
+   - Secure error handling
+   - Input sanitization
+
+Remember: This code will be used in production. It must be complete, robust, and maintainable.
+Avoid shortcuts or minimal implementations. Write code that you would confidently deploy to production.
+
+Output your implementation in `=== File: {file_path} ===`"""
+            
+            # Enhance with dependency information
+            enhanced_prompt = enhance_implementation_prompt(file_path, original_file_prompt)
+            
+            # Create enhanced call_llm function
+            original_call_llm = orchestrator.call_llm
+            
+            def enhanced_call_llm(system_prompt, file_prompt, **kwargs):
+                """Replace the original prompt with enhanced prompt"""
+                # Only enhance if it's the implementation prompt
+                if "File Implementation:" in file_prompt:
+                    return original_call_llm(system_prompt, enhanced_prompt, **kwargs)
+                return original_call_llm(system_prompt, file_prompt, **kwargs)
+            
+            try:
+                # Replace the call_llm function temporarily
+                orchestrator.call_llm = enhanced_call_llm
+                
+                # Call original implementation function
+                result = original_implement_single_file(file_path, structure_content, step_outputs, 
+                                                      orchestrator, model_name, file_map)
+                
+                # Check for dependencies after implementation
+                if result and file_path in file_map:
+                    deps = resolver.check_file(file_path, file_map[file_path].content)
+                    if deps:
+                        print(f"⚠️ Found {len(deps)} unresolved dependencies in {file_path}:")
+                        for dep in deps:
+                            print(f"  - {dep.module_name} ({dep.import_type})")
+                    else:
+                        print(f"✅ No dependency issues found in {file_path}")
+                
+                return result
+            finally:
+                # Restore original function
+                orchestrator.call_llm = original_call_llm
+        
+        def dependency_aware_prioritize(files, implementation_plan):
+            """Prioritize files based on dependencies"""
+            # First get original prioritization
+            initial_priority = original_prioritize_files(files, implementation_plan)
+            
+            # Then enhance with dependency-based prioritization
+            graph = get_dependency_tracker()
+            if graph is None:
+                return initial_priority
+                
+            # Prioritize files that other files depend on
+            from dependency_tracker import prioritize_files_by_dependencies
+            final_priority = prioritize_files_by_dependencies(initial_priority)
+            
+            # If the order changed, log it
+            if final_priority != initial_priority:
+                print("📋 Reprioritized file implementation order based on dependencies:")
+                for i, file in enumerate(final_priority[:5]):  # Show first 5 files
+                    print(f"  {i+1}. {file}")
+                if len(final_priority) > 5:
+                    print(f"  ... plus {len(final_priority)-5} more files")
+            
+            return final_priority
+        
+        # Apply the monkey patches
+        project_builder.implement_single_file = dependency_aware_implement
+        project_builder.prioritize_files = dependency_aware_prioritize
+    
+    try:
+        # Run the project builder with the chosen model
+        from project_builder import run_project_builder
+        
+        # Run the project builder with the appropriate arguments
+        result = run_project_builder(
+            vision,
+            model_name,
+            start_step=args.start_step if hasattr(args, 'start_step') else 1,
+            start_substep=args.start_substep if hasattr(args, 'start_substep') else None,
+            run_syntax_check_only=args.syntax_check_only if hasattr(args, 'syntax_check_only') else False
+        )
+        
+        # Restore original functions if we monkey patched them
+        if args.track_dependencies:
+            project_builder.implement_single_file = original_implement_single_file
+            project_builder.prioritize_files = original_prioritize_files
+        
+        # Check dependencies after completion if requested
+        if args.track_dependencies and DEPENDENCY_TRACKING_AVAILABLE and result:
+            perform_final_dependency_check(PROJECT_DIR, orchestrator, model_name)
+        
+        return result
+    
+    except Exception as e:
+        print(f"Error running project builder: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 if __name__ == "__main__":
     main()

@@ -70,7 +70,7 @@ Output your work in the following files:
 Project Description:
 {vision}
 
-Create a project overview that includes:
+Create a comprehensive project overview that includes:
 1. Vision Summary
 2. Project Objectives
 3. Expected Outcomes
@@ -102,12 +102,13 @@ Tech Stack: {step1B}
 Project Description:
 {vision}
 
-Create a detailed project structure including:
+Create a detailed and comprehensive project structure including:
 1. Directory organization
 2. Key files and their purposes
 3. Module organization
 4. Naming conventions
 
+Make sure your project structure is clearly parsable and that no folders are shown as empty in your document.
 Output your structure plan in `=== File: doc/01_project_plan_structure.md ===`""")
         ]
     },

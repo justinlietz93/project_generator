@@ -265,3 +265,90 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
+# Dependency Tracking System for Project Builder
+
+This system enhances your AI-driven project generation by tracking and validating dependencies between files in real-time, ensuring all imports and module references are properly aligned.
+
+## Problem
+
+When the AI generates one file at a time, it might create imports that don't match actual module/file names in other parts of the project. This leads to broken dependencies and errors when running the generated code.
+
+The iterative dependency tracking system solves this by:
+1. Tracking dependencies as files are created
+2. Providing dependency context to the LLM when implementing files
+3. Checking for unresolved dependencies after each file is implemented
+4. Fixing any remaining dependency issues at the end of project generation
+
+## How to Use
+
+### Option 1: Use the Integration Example Script
+
+The simplest way to use the dependency tracking system is with the integration example script:
+
+```bash
+python dependency_integration_example.py "Your project vision" --model "your-model"
+```
+
+This script:
+1. Runs the original project_builder.py with dependency awareness
+2. Enhances LLM prompts with dependency information
+3. Checks for dependencies after each file is generated
+4. Fixes any remaining dependencies at the end of the process
+
+### Option 2: Use the DependencyResolver Directly
+
+If you want to integrate the dependency tracking more deeply into your own workflow:
+
+```python
+from dependency_tracker import DependencyResolver
+
+# Initialize the resolver
+resolver = DependencyResolver(project_dir)
+resolver.initialize(file_map)
+
+# When implementing a file, enhance the prompt with dependency context
+enhanced_prompt = resolver.enhance_prompt(file_path, original_prompt)
+
+# After implementing a file, check for dependencies
+unresolved_deps = resolver.check_file(file_path, file_content)
+
+# At the end, perform a final check and fix remaining issues
+if not resolver.perform_final_check(file_map):
+    # Use the iterate_fixes method with your own fix function
+    resolver.iterate_fixes(file_map, your_fix_function)
+```
+
+## How It Works
+
+1. **Dependency Detection**: The system parses imports in files and tracks which files depend on which modules.
+
+2. **Real-time Tracking**: As each file is implemented, its dependencies are recorded and checked.
+
+3. **Enhanced Prompting**: When implementing a file, the LLM is provided with information about:
+   - Unresolved dependencies specific to this file
+   - Available project modules that can be imported
+   - Suggestions for handling missing dependencies
+
+4. **Iterative Resolution**: After all files are generated, the system iteratively fixes remaining dependency issues by:
+   - Identifying files with unresolved dependencies
+   - Generating specialized prompts for the LLM to fix each file
+   - Updating the files with the fixes
+   - Re-checking dependencies until everything is resolved
+
+5. **Missing __init__.py Generation**: The system automatically creates missing __init__.py files in Python packages.
+
+## Files in this System
+
+- **dependency_tracker.py**: Core module for tracking and analyzing dependencies
+- **dependency_integration_example.py**: Example script showing how to use the dependency tracking system
+
+## Benefits
+
+1. **Reduced Errors**: Catches dependency misalignments early in the generation process
+2. **Improved Coherence**: Ensures consistent naming across modules and imports 
+3. **Better Context**: Provides the AI with information about existing modules
+4. **Automatic Fixes**: Iteratively resolves dependency issues until the project is clean
+5. **Non-Invasive**: Works without modifying the core project_builder.py functionality
+
+This system significantly improves the reliability of AI-generated code by ensuring that all dependencies are properly aligned and resolved.
+
