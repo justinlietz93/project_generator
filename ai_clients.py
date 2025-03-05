@@ -50,8 +50,7 @@ except ImportError:
 import anthropic
 import openai
 try:
-    from google import genai
-    from google.genai import types
+    import google.generativeai as genai
     HAS_GEMINI = True
 except ImportError:
     print("Warning: google-generativeai not installed. To use Gemini models, install with: pip install google-generativeai")
@@ -325,10 +324,10 @@ class DeepseekR1Client:
 
 class GeminiProClient:
     """
-    Minimal client for Google's Gemini 2.0 Pro Experimental model.
+    Minimal client for Google's Gemini models.
     Uses environment variables:
       - GEMINI_API_KEY: The API key for Google AI
-      - GEMINI_MODEL (optional, default "gemini-2.0-pro-exp-0205")
+      - GEMINI_MODEL (optional, default "gemini-2.0-flash")
     """
 
     def __init__(self):
@@ -336,67 +335,84 @@ class GeminiProClient:
             raise ImportError("google-generativeai package is required to use Gemini models. Install with: pip install google-generativeai")
         
         self.api_key = os.environ.get("GEMINI_API_KEY", "missing-api-key")
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-pro-exp-0205")
-        self.client = genai.Client(api_key=self.api_key)
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        # Configure the API key
+        genai.configure(api_key=self.api_key)
+        # Default output token limits per model
+        self.output_token_limits = {
+            "gemini-2.0-flash": 8192,
+            "gemini-2.0-pro-exp-0205": 64000
+        }
+        # Default input token limits per model
+        self.input_token_limits = {
+            "gemini-2.0-flash": 1000000,
+            "gemini-2.0-pro-exp-0205": 1000000
+        }
 
-    def run(self, messages, max_tokens=500000, temperature=0.2, enable_thinking=False, thinking_budget=None):
+    def run(self, messages, max_tokens=None, temperature=0.2, enable_thinking=False, thinking_budget=None):
         """
         Call to the Gemini model.
         
         :param messages: list of { "role": "user"/"assistant"/"system", "content": "..."}
-        :param max_tokens: Maximum tokens in the response
+        :param max_tokens: Maximum tokens in the response (defaults to model's output limit)
         :param temperature: Controls randomness (0.0-1.0, higher = more creative)
         :param enable_thinking: Not used for Gemini
         :param thinking_budget: Not used for Gemini
         :return: The model's response text
         """
         try:
+            # Set default max tokens based on the model
+            if max_tokens is None:
+                max_tokens = self.output_token_limits.get(self.model_name, 8192)
+            
+            # Create a generation config
+            generation_config = {
+                "max_output_tokens": max_tokens,
+                "temperature": temperature
+            }
+            
             # Convert messages to Gemini-friendly format
-            contents = []
+            gemini_messages = []
+            system_content = None
             
-            # Process messages in order
-            for message in messages:
-                role = message["role"]
-                content = message["content"]
-                
-                # Handle system message - prefixing to the first user message
-                if role == "system":
-                    # Store system message for later use with user message
-                    system_content = content
-                    continue
-                
-                # For user messages, prepend any system instructions
-                if role == "user":
-                    if contents and 'system_content' in locals():
-                        # If we have a system message and this isn't the first message,
-                        # prepend it to the user message
-                        content = f"System Instructions: {system_content}\n\nUser Message: {content}"
-                        # Clear the system content after using it
-                        del system_content
-                        
-                    contents.append(content)
-                # Handle assistant messages
-                elif role == "assistant":
-                    contents.append({"role": "model", "parts": [content]})
+            # Extract system message if present
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                elif msg["role"] == "user":
+                    if system_content:
+                        # If we have a system message, prepend it to user message
+                        role_content = f"System Instructions: {system_content}\n\nUser Message: {msg['content']}"
+                        gemini_messages.append({"role": "user", "parts": [role_content]})
+                        system_content = None  # Clear after use
+                    else:
+                        gemini_messages.append({"role": "user", "parts": [msg["content"]]})
+                elif msg["role"] == "assistant":
+                    gemini_messages.append({"role": "model", "parts": [msg["content"]]})
             
-            # Configure generation parameters
-            config = types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                temperature=temperature
-            )
+            # Get the model
+            model = genai.GenerativeModel(model_name=self.model_name, generation_config=generation_config)
             
-            # Call the Gemini API
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=config
-            )
+            # If we only have one message, use the generate_content method
+            if len(gemini_messages) <= 1:
+                content = system_content or ""
+                if gemini_messages:
+                    content = gemini_messages[0]["parts"][0]
+                response = model.generate_content(content)
+                return response.text
             
-            # Extract and return the text response
+            # Otherwise use the chat method
+            chat = model.start_chat()
+            for msg in gemini_messages:
+                if msg["role"] == "user":
+                    response = chat.send_message(msg["parts"][0])
+            
             return response.text
             
         except Exception as e:
-            return f"ERROR from Gemini: {str(e)}"
+            error_msg = f"ERROR from Gemini: {str(e)}"
+            print(error_msg)
+            return error_msg
 
 
 class OllamaClient:
@@ -486,6 +502,7 @@ class AIOrchestrator:
         - "claude37sonnet" 
         - "deepseekr1"
         - "gemini2pro"
+        - "gemini2flash"
         - "ollama:modelname" or just a model name for Ollama
         """
         self.model_name = model_name.lower()
@@ -494,16 +511,26 @@ class AIOrchestrator:
         if self.model_name == "claude37sonnet":
             self.client = Claude37SonnetClient()
             self.max_tokens_limit = 64000
+            self.max_input_tokens = 200000  # Claude's input limit
         elif self.model_name == "deepseekr1":
             self.client = DeepseekR1Client()
-            self.max_tokens_limit = 8192  # DeepSeek's limit
+            self.max_tokens_limit = 8192  # DeepSeek's output limit
+            self.max_input_tokens = 32000  # DeepSeek's input limit
         elif self.model_name == "gemini2pro":
             self.client = GeminiProClient()
             self.max_tokens_limit = 64000
+            self.max_input_tokens = 1000000  # Gemini Pro's input limit
+            self.client.model_name = "gemini-2.0-pro-exp-0205"  # Override to use Pro model
+        elif self.model_name == "gemini2flash":
+            self.client = GeminiProClient()
+            self.max_tokens_limit = 8192  # Gemini 2.0 Flash output limit
+            self.max_input_tokens = 1000000  # Gemini 2.0 Flash input limit (1,048,576)
+            self.client.model_name = "gemini-2.0-flash"  # Ensure using Flash model
         # Ollama models
         elif self.model_name.startswith("ollama:") or self._is_ollama_model(self.model_name):
             self.client = OllamaClient(self.model_name)
             self.max_tokens_limit = 4096  # Default for most Ollama models
+            self.max_input_tokens = 8192  # Default input limit for Ollama models
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
@@ -521,21 +548,32 @@ class AIOrchestrator:
             return False
         return False
 
-    def call_llm(self, system_prompt: str, user_prompt: str, max_tokens: int = 64000, temperature: float = 0.2) -> str:
+    def call_llm(self, system_prompt: str, user_prompt: str, max_tokens: int = None, temperature: float = 0.2) -> str:
         """
         Minimal synergy: just pass system+user messages, get final text.
         
         :param system_prompt: The system instruction
         :param user_prompt: The user query or instruction
-        :param max_tokens: Maximum tokens in the response
+        :param max_tokens: Maximum tokens in the response (defaults to model's limit)
         :param temperature: Controls randomness (0.0-1.0, higher = more creative)
         :return: The model's response text
         """
-        # Ensure max_tokens is within the model's limit
-        max_tokens = min(max_tokens, self.max_tokens_limit)
+        # If max_tokens is not specified, use the model's default limit
+        if max_tokens is None:
+            max_tokens = self.max_tokens_limit
+        else:
+            # Otherwise ensure max_tokens is within the model's limit
+            max_tokens = min(max_tokens, self.max_tokens_limit)
         
+        # Create the messages list for the model
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        return self.client.run(messages, max_tokens=max_tokens, temperature=temperature)
+        
+        # Call the model
+        return self.client.run(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )

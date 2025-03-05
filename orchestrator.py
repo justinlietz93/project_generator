@@ -283,6 +283,23 @@ def run_llm_workflow(workflow_type: str, vision: str, model_name: str, start_ste
         import traceback
         traceback.print_exc()
 
+def normalize_model_name(model_name: str) -> str:
+    """
+    Normalize various model name formats to our internal model identifiers.
+    
+    Args:
+        model_name: The model name from command line args
+        
+    Returns:
+        Normalized model name for internal use
+    """
+    model_map = {
+        'gemini-2.0-flash': 'gemini2flash',
+        'gemini-2.0-pro-exp-0205': 'gemini2pro'
+    }
+    
+    return model_map.get(model_name.lower(), model_name.lower())
+
 def main():
     # Platform check
     if sys.platform == 'win32':
@@ -309,8 +326,9 @@ This ensures cross-platform compatibility.""")
     parser.add_argument('--disable-syntax-check', action='store_true', help='Disable automatic syntax checking during build')
     parser.add_argument('--track-dependencies', action='store_true',
                        help='Track and fix dependencies between files during project generation')
-    parser.add_argument('model', choices=['claude37sonnet', 'deepseekr1'], 
-                      help='Which LLM to use (claude37sonnet or deepseekr1)')
+    parser.add_argument('model', 
+                      choices=['claude37sonnet', 'deepseekr1', 'gemini2pro', 'gemini2flash', 'gemini-2.0-flash', 'gemini-2.0-pro-exp-0205'], 
+                      help='Which LLM to use (claude37sonnet, deepseekr1, gemini2pro/gemini-2.0-pro-exp-0205, or gemini2flash/gemini-2.0-flash)')
     parser.add_argument('domain', nargs='?', default=None, 
                       help='Domain/challenge to explore')
     

@@ -214,7 +214,7 @@ async def get_user_by_api_key(api_key: str, db=fake_users_db):
 async def list_models(user: User = Depends(get_current_active_user)):
     # List available models based on user tier
     # For testing: make all models available to all users
-    available_models = ["deepseekr1", "claude37sonnet"]
+    available_models = ["deepseekr1", "claude37sonnet", "gemini2pro", "gemini2flash"]
     
     # Return all models for now
     return available_models
@@ -256,7 +256,8 @@ async def generate_ai_response(
     # Define model-specific token limits
     model_token_limits = {
         "deepseekr1": 8192,
-        "claude37sonnet": 64000
+        "claude37sonnet": 64000,
+        "gemini-2.0-flash": 8192
     }
     
     # Standard tier token limit
@@ -345,7 +346,8 @@ async def build_project(
     # Define model-specific token limits
     model_token_limits = {
         "deepseekr1": 8192,
-        "claude37sonnet": 64000
+        "claude37sonnet": 64000,
+        "gemini-2.0-flash": 8192
     }
     
     # Validate model access based on user tier
@@ -1305,7 +1307,7 @@ async def resume_project_build(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resuming project build: {str(e)}"
-    )
+        )
 
 if __name__ == "__main__":
     import uvicorn

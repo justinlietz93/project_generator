@@ -24,30 +24,14 @@ if the build process was interrupted.
 import os
 import sys
 import argparse
-import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import json
 import time
 import subprocess
-import datetime
-from threading import Timer
-from html.parser import HTMLParser
 
 from ai_clients import AIOrchestrator
 from utils import ProjectFile, SubStep, read_project_files, write_project_file, parse_ai_response_and_apply
-
-# Import dependency tracking system
-try:
-    from dependency_integration import (
-        initialize_dependency_tracking,
-        restore_original_functions,
-        perform_final_dependency_check
-    )
-    DEPENDENCY_TRACKING_AVAILABLE = True
-except ImportError:
-    DEPENDENCY_TRACKING_AVAILABLE = False
-    print("Warning: Dependency tracking system not available. Continuing without dependency tracking.")
 
 # Global token management
 TOKEN_SAFETY_THRESHOLD = 12000  # Reduced to avoid rate limits
@@ -57,9 +41,6 @@ PROJECT_DIR = "generated_project"
 
 # Add a flag to control linting (enabled by default)
 ENABLE_SYNTAX_CHECKING = True
-
-# Define alphabetic IDs for substeps (A, B, C, etc.)
-ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # Define the project building steps with substeps
 BUILDER_STEPS = [
@@ -83,7 +64,7 @@ Output your work in the following files:
 Project Description:
 {vision}
 
-Create a comprehensive project overview that includes:
+Create a project overview that includes:
 1. Vision Summary
 2. Project Objectives
 3. Expected Outcomes
@@ -115,13 +96,12 @@ Tech Stack: {step1B}
 Project Description:
 {vision}
 
-Create a detailed and comprehensive project structure including:
+Create a detailed project structure including:
 1. Directory organization
 2. Key files and their purposes
 3. Module organization
 4. Naming conventions
 
-Make sure your project structure is clearly parsable and that no folders are shown as empty in your document.
 Output your structure plan in `=== File: doc/01_project_plan_structure.md ===`""")
         ]
     },
@@ -154,7 +134,7 @@ Output your architecture document in `=== File: doc/02_system_architecture.md ==
 1. Define major system components
 2. Specify component responsibilities
 3. Document component interactions
-4. Create component diagrams (if you use mermaid diagrams please draw them inline in markdown format)
+4. Create component diagrams
 5. Explain architectural patterns used
 
 Output in `=== File: doc/02A_component_architecture.md ===`"""),
@@ -865,89 +845,37 @@ def generate_structure_script(structure_content: str, output_script_path: str, o
     """
     print(f"Generating structure script at {output_script_path}")
     
-    # Define retry parameters
-    max_retries = 3
-    retry_count = 0
+    prompt = f"""
+    I need you to create a bash script that will set up a project structure precisely in the current directory where the script is run.
     
-    while retry_count < max_retries:
-        try:
-            prompt = f"""
-            I need you to create a bash script that will set up a project structure precisely in the current directory where the script is run.
-            
-            CRITICAL INSTRUCTIONS ABOUT PATHS:
-            1. The script will be executed directly inside the project directory (C:\\git\\project_maker\\generated_project\\)
-            2. ALL files and directories must be created INSIDE this directory
-            3. DO NOT create any project root directory - your current working directory IS already the project root
-            4. If the structure documentation shows: "neuroca/src/main.py", just create "./src/main.py" 
-            5. NEVER use absolute paths or parent directory references (like ../) in your script
-            6. All paths should be relative to the current directory
-            7. Only use ./ or direct subdirectory references like "src/" or "api/"
-            
-            ENCODING REQUIREMENTS:
-            1. Use only ASCII characters in your script (no Unicode or special characters)
-            2. Avoid any non-English characters, emojis, or special symbols
-            3. Do NOT add any special characters or invisible characters to filenames or directories
-            4. Make sure file extensions are written correctly - no trailing spaces or special characters
-            5. Include explicit parent directory creation for all files to avoid path errors
-            
-            *** EXTREMELY IMPORTANT - EMPTY DIRECTORIES ARE NOT ALLOWED ***
-            - EVERY directory MUST contain ALL THE FILES that are required. This will be the FINAL STRUCTURE.
-            - If a directory would otherwise be empty, create a README.md file in it
-            - NEVER create a directory without also creating at least one file inside it
-            - Check your entire script to ensure no empty directories exist
-            - This is a STRICT requirement - the system will fail if empty directories exist
-            
-            The script should:
-            1. Create all directories first using mkdir -p
-            2. Create all empty files using touch
-            3. Print progress as it creates directories and files
-            4. ALWAYS ensure parent directories exist before creating files
-            5. Use clean filenames without any special characters
-            6. There MUST NOT BE EMPTY FOLDERS.
-            
-            Here's the project structure document:
-            
-            {structure_content}
-            
-            IMPORTANT REMINDER: Your script will be run FROM INSIDE the project directory. Do not try to navigate to different directories.
-            Make sure all filenames and extensions are written correctly with NO trailing spaces or invisible characters.
-            """
-            
-            # Use the orchestrator to generate the script
-            system_prompt = "You are an expert in bash scripting. Your task is to convert a project structure description into a bash script that creates all directories and files. IMPORTANT: Use only ASCII characters in your script (no Unicode special characters)."
-            
-            print("Calling model to generate script...")
-            script_content = orchestrator.call_llm(system_prompt, prompt, max_tokens=8000, temperature=0.2)
-            
-            # Log the raw response for debugging
-            print(f"Raw script content length: {len(script_content or '')}")
-            if script_content:
-                # Print the first few lines to see what we're getting
-                preview_lines = script_content.split('\n')[:10]
-                print("Script content preview (first 10 lines):")
-                for line in preview_lines:
-                    print(f"  > {line}")
-            else:
-                print("WARNING: Script content is None or empty!")
-            
-            # Sanitize the content to remove any potentially problematic characters
-            if script_content:
-                script_content = ''.join(char for char in script_content if ord(char) < 128)
-            
-            # Verify that the script is not empty or too short
-            if not script_content or len(script_content.strip()) < 50:
-                print(f"⚠️ Generated script is too short or empty. Retrying ({retry_count + 1}/{max_retries})...")
-                retry_count += 1
-                continue
-            
-            # Check for required bash commands
-            if "mkdir" not in script_content or "touch" not in script_content:
-                print(f"⚠️ Generated script is missing essential commands (mkdir/touch). Retrying ({retry_count + 1}/{max_retries})...")
-                retry_count += 1
-                continue
-            
-            # Add a header comment to clarify the purpose and execution directory
-            script_header = """#!/bin/bash
+    CRITICAL INSTRUCTIONS ABOUT PATHS:
+    1. The script will be executed directly inside the project directory (C:\\git\\project_maker\\generated_project\\)
+    2. ALL files and directories must be created INSIDE this directory
+    3. DO NOT create any project root directory - your current working directory IS already the project root
+    4. If the structure documentation shows: "neuroca/src/main.py", just create "./src/main.py" 
+    5. NEVER use absolute paths or parent directory references (like ../) in your script
+    6. All paths should be relative to the current directory
+    7. Only use ./ or direct subdirectory references like "src/" or "api/"
+    
+    The script should:
+    1. Create all directories first using mkdir -p
+    2. Create all empty files using touch
+    3. Print progress as it creates directories and files
+    
+    Here's the project structure document:
+    
+    {structure_content}
+    
+    IMPORTANT REMINDER: Your script will be run FROM INSIDE the project directory. Do not try to navigate to different directories.
+    """
+    
+    try:
+        # Use the orchestrator to generate the script
+        system_prompt = "You are an expert in bash scripting. Your task is to convert a project structure description into a bash script that creates all directories and files."
+        script_content = orchestrator.call_llm(system_prompt, prompt, max_tokens=8000, temperature=0.2)
+        
+        # Add a header comment to clarify the purpose and execution directory
+        script_header = """#!/bin/bash
 # Project structure setup script
 # This script should be run from inside the project root directory
 # It will create all directories and files for the project structure
@@ -956,40 +884,22 @@ def generate_structure_script(structure_content: str, output_script_path: str, o
 echo "Creating project structure in: $(pwd)"
 
 """
-            script_content = script_header + script_content
+        script_content = script_header + script_content
+        
+        # Write the script to file
+        with open(output_script_path, 'w') as f:
+            f.write(script_content)
             
-            # Write the script to file with explicit encoding
-            with open(output_script_path, 'w', encoding='ascii', errors='ignore', newline='\n') as f:
-                f.write(script_content)
-                
-            print(f"Script generated at: {output_script_path}")
-            
-            # Make the script executable
-            os.chmod(output_script_path, 0o755)
-            
-            # Check if the file was written successfully and contains actual content
-            if os.path.getsize(output_script_path) < 100:  # Arbitrary size check
-                print(f"⚠️ Script file too small ({os.path.getsize(output_script_path)} bytes). Retrying...")
-                retry_count += 1
-                continue
-                
-            print(f"✅ Structure script generated at {output_script_path} ({os.path.getsize(output_script_path)} bytes)")
-            return True
-            
-        except UnicodeEncodeError as e:
-            print(f"⚠️ Character encoding error during script generation: {str(e)}")
-            print(f"Error details: {e.__class__.__name__}, encoding: {e.encoding}, object: {repr(e.object[:50])}...")
-            print(f"Retrying ({retry_count + 1}/{max_retries})...")
-            retry_count += 1
-            
-        except Exception as e:
-            print(f"❌ Failed to generate structure script: {str(e)}")
-            print(f"Retrying ({retry_count + 1}/{max_retries})...")
-            retry_count += 1
-    
-    # If we've exhausted all retries
-    print(f"❌ Failed to generate script after {max_retries} attempts")
-    return False
+        print(f"Script generated at: {output_script_path}")
+        
+        # Make the script executable
+        os.chmod(output_script_path, 0o755)
+        
+        print(f"✅ Structure script generated at {output_script_path}")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to generate structure script: {str(e)}")
+        return False
 
 def execute_structure_script(script_path: str) -> bool:
     """
@@ -1001,42 +911,12 @@ def execute_structure_script(script_path: str) -> bool:
     Returns:
         bool: True if script executed successfully, False otherwise
     """
-    global PROJECT_DIR  # Global declaration at the beginning of the function
-    
     print("Executing project structure script...")
     
     try:
         # Make sure PROJECT_DIR exists and is clean - we'll create all files inside it
         project_dir_abs = os.path.abspath(PROJECT_DIR)
         print(f"Target project directory: {project_dir_abs}")
-        
-        # Create a project-specific subfolder (use a generic name if can't determine)
-        # Extract project name from the status file if it exists
-        project_name = "project"  # Default name
-        status_path = os.path.join(project_dir_abs, "status.json")
-        if os.path.exists(status_path):
-            try:
-                with open(status_path, 'r') as f:
-                    status_data = json.load(f)
-                    if "vision" in status_data and status_data["vision"]:
-                        # Try to extract a project name from the vision
-                        vision_text = status_data["vision"]
-                        # Get the first line or first 50 chars
-                        first_line = vision_text.split('\n')[0][:50]
-                        # Clean it to make a valid folder name
-                        import re
-                        project_name = re.sub(r'[^\w\-]', '_', first_line.lower())
-                        project_name = re.sub(r'_+', '_', project_name)  # Replace multiple underscores with one
-                        project_name = project_name.strip('_')[:30]  # Limit length
-                        if not project_name:
-                            project_name = "project"
-            except Exception as e:
-                print(f"Could not extract project name from status.json: {e}")
-        
-        # Create the project subfolder
-        project_subfolder = os.path.join(project_dir_abs, project_name)
-        os.makedirs(project_subfolder, exist_ok=True)
-        print(f"Using project subfolder: {project_name}/")
         
         # Ensure the directory exists
         os.makedirs(project_dir_abs, exist_ok=True)
@@ -1045,126 +925,201 @@ def execute_structure_script(script_path: str) -> bool:
         script_path_abs = os.path.abspath(script_path)
         print(f"Script path: {script_path_abs}")
         
-        # Get the list of existing files before script execution
-        existing_files = []
-        for root, dirs, files in os.walk(project_subfolder):
-            for file in files:
-                existing_files.append(os.path.join(root, file))
-        
-        print(f"Found {len(existing_files)} existing files before script execution")
-        
-        # Don't try to use bash - parse and execute directly with Python
-        print("Executing script directly with Python (no bash)...")
-        
-        # Read the script content
-        with open(script_path_abs, 'r', encoding='utf-8', errors='ignore') as f:
-            script_content = f.read()
-        
-        # Parse the script to find mkdir and touch commands
-        import re
-        
-        # Extract mkdir commands
-        mkdir_pattern = r'mkdir\s+-p\s+["\']?([^"\';\n<>|]+)["\']?'
-        dirs_to_create = re.findall(mkdir_pattern, script_content)
-        
-        # Extract touch commands for file creation
-        touch_pattern = r'touch\s+["\']?([^"\';\n<>|]+)["\']?'
-        files_to_create = re.findall(touch_pattern, script_content)
-        
-        print(f"Found {len(dirs_to_create)} directories and {len(files_to_create)} files to create")
-        
-        # Create all directories - but inside the project subfolder
-        for dir_path in dirs_to_create:
+        # Determine which shell to use based on OS
+        if os.name == 'nt':  # Windows
+            # Try multiple approaches for Windows
             try:
-                # Clean the path and convert to Windows path
-                clean_path = re.sub(r'[^\w\/\-\.\\]', '', dir_path)
-                norm_path = clean_path.replace('/', os.sep)
-                # Place inside the project subfolder instead of directly in generated_project
-                full_path = os.path.join(project_subfolder, norm_path)
-                os.makedirs(full_path, exist_ok=True)
-                print(f"Created directory: {project_name}/{dir_path}")
-            except Exception as e:
-                print(f"Error creating directory {dir_path}: {e}")
-        
-        # Create all files - but inside the project subfolder
-        for file_path in files_to_create:
-            try:
-                # Clean the path and convert to Windows path
-                clean_path = re.sub(r'[^\w\/\-\.\\]', '', file_path)
-                norm_path = clean_path.replace('/', os.sep)
-                # Place inside the project subfolder instead of directly in generated_project
-                full_path = os.path.join(project_subfolder, norm_path)
-                # Make sure parent directory exists
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                # Create empty file
-                with open(full_path, 'w', encoding='utf-8') as f:
-                    pass
-                print(f"Created file: {project_name}/{file_path}")
-            except Exception as e:
-                print(f"Error creating file {file_path}: {e}")
-        
-        # Check what files were created
-        new_files = []
-        for root, dirs, files in os.walk(project_subfolder):
-            for file in files:
-                new_files.append(os.path.join(root, file))
-        
-        # Calculate which files are actually new
-        truly_new_files = [f for f in new_files if f not in existing_files]
-        
-        if not truly_new_files:
-            print("⚠️ Warning: No new files were created by the script.")
-            return False
-        
-        # Show what was created
-        created_files = []
-        for file_path in truly_new_files:
-            rel_path = os.path.relpath(file_path, project_dir_abs).replace('\\', '/')
-            created_files.append(rel_path)
-        
-        print(f"Created {len(created_files)} new files")
-        for file in created_files[:5]:
-            print(f" - {file}")
-        if len(created_files) > 5:
-            print(f" - ... and {len(created_files) - 5} more files")
-        
-        # Check for empty directories - these are not allowed
-        empty_dirs = []
-        for root, dirs, files in os.walk(project_subfolder):
-            if not files and not dirs:  # This is an empty leaf directory
-                rel_dir = os.path.relpath(root, project_subfolder).replace('\\', '/')
-                empty_dirs.append(rel_dir)
-        
-        if empty_dirs:
-            print("\n⚠️ WARNING: Found empty directories! All directories must contain at least one file:")
-            for dir_path in empty_dirs:
-                print(f" - {dir_path}")
-            print("\nConsider adding README.md files to these directories or removing them.")
-            # Don't return False here so we can continue, but make it clear this is a problem
-        else:
-            print("\n✅ No empty directories found - all directories contain at least one file")
-        
-        print(f"✅ Project structure created successfully inside {project_name}/ subfolder")
-        
-        # Save the original structure script path for later steps before changing PROJECT_DIR
-        original_script_path = os.path.join(project_dir_abs, "setup_project_structure.sh")
-        if os.path.exists(original_script_path):
-            script_dest = os.path.join(project_subfolder, "setup_project_structure.sh")
-            try:
-                # Copy the script to the new location
-                with open(original_script_path, 'r', encoding='utf-8', errors='ignore') as src:
-                    script_content = src.read()
-                with open(script_dest, 'w', encoding='utf-8') as dst:
-                    dst.write(script_content)
-                print(f"Copied setup script to project subfolder")
-            except Exception as e:
-                print(f"Warning: Could not copy script to project subfolder: {e}")
-        
-        # Update discovery and implementation paths to reflect the new structure
-        PROJECT_DIR = project_subfolder
-        
-        return True
-        
+                # Approach 1: Try using bash.exe if Git Bash is installed
+                print("Attempting to use Git Bash...")
+                # Check if bash is available in common Git installation paths
+                bash_paths = [
+                    r"C:\Program Files\Git\bin\bash.exe",
+                    r"C:\Program Files (x86)\Git\bin\bash.exe",
+                    "bash.exe"  # Try PATH
+                ]
+                
+                bash_executable = None
+                for path in bash_paths:
+                    try:
+                        # Test if the bash executable exists and is runnable
+                        subprocess.run([path, "--version"], capture_output=True, check=False)
+                        bash_executable = path
+                        break
+                    except (FileNotFoundError, subprocess.SubprocessError):
+                        continue
+                
+                if bash_executable:
+                    print(f"Found Git Bash at: {bash_executable}")
+                    print(f"Running script with working directory: {project_dir_abs}")
+                    
+                    # Run the script from within the PROJECT_DIR
+                    command = [bash_executable, script_path_abs]
+                    print(f"Running command: {' '.join(command)}")
+                    print(f"Working directory: {project_dir_abs}")
+                    
+                    result = subprocess.run(
+                        command,
+                        cwd=project_dir_abs,
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    # Print output for debugging
+                    if result.stdout:
+                        print("Script output:")
+                        print(result.stdout)
+                    
+                    # Check what files were created
+                    print("Verifying created files...")
+                    created_files = []
+                    for root, dirs, files in os.walk(project_dir_abs):
+                        rel_root = os.path.relpath(root, project_dir_abs)
+                        if rel_root == '.':
+                            rel_root = ''
+                        for file in files:
+                            if file != os.path.basename(script_path):
+                                rel_path = os.path.join(rel_root, file).replace('\\', '/')
+                                created_files.append(rel_path)
+                    
+                    print(f"Created {len(created_files)} files")
+                    # Print first 5 files as a sample
+                    for file in created_files[:5]:
+                        print(f" - {file}")
+                    if len(created_files) > 5:
+                        print(f" - ... and {len(created_files) - 5} more files")
+                    
+                    print("✅ Project structure created successfully using Git Bash")
+                    return True
+                else:
+                    raise FileNotFoundError("Git Bash not found")
+                    
+            except Exception as bash_error:
+                print(f"Cannot use Git Bash: {str(bash_error)}")
+                print("Falling back to Python implementation...")
+                
+                # Approach 2: Parse and execute the script directly in Python
+                with open(script_path, 'r') as f:
+                    script_content = f.read()
+                
+                # Parse the bash script to extract mkdir and touch commands
+                import re
+                
+                # Always use PROJECT_DIR as the base directory
+                base_dir = os.path.abspath(PROJECT_DIR)
+                print(f"Creating files in: {base_dir}")
+                
+                # Extract mkdir commands
+                mkdir_pattern = r'mkdir\s+-p\s+["\'](.*?)["\']\s*'
+                dirs_to_create = re.findall(mkdir_pattern, script_content)
+                
+                # Extract touch/echo commands for file creation
+                touch_pattern = r'touch\s+["\'](.*?)["\']\s*'
+                echo_pattern = r'echo\s+.*?>\s+["\'](.*?)["\']\s*'
+                
+                files_to_create = re.findall(touch_pattern, script_content)
+                files_to_create.extend(re.findall(echo_pattern, script_content))
+                
+                # If we couldn't parse the script properly, use a simpler approach
+                if not dirs_to_create and not files_to_create:
+                    print("Could not parse bash script, using simple directory extraction...")
+                    # Look for path-like patterns in the script
+                    path_pattern = r'["\']([\w\/\.\-\_]+)["\']\s*'
+                    potential_paths = re.findall(path_pattern, script_content)
+                    
+                    for path in potential_paths:
+                        # Skip if doesn't look like a file path
+                        if not ('/' in path or '\\' in path):
+                            continue
+                            
+                        # Convert to Windows path format
+                        win_path = path.replace('/', '\\')
+                        full_path = os.path.join(base_dir, win_path)
+                        
+                        # If it ends with a slash or looks like a directory, create directory
+                        if path.endswith('/') or '.' not in os.path.basename(path):
+                            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                            # In case it's a directory itself
+                            os.makedirs(full_path, exist_ok=True)
+                        else:
+                            # It's a file
+                            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                            # Create empty file
+                            with open(full_path, 'w') as f:
+                                pass
+                
+                else:
+                    # Create all directories
+                    for dir_path in dirs_to_create:
+                        # Convert to Windows path
+                        win_path = dir_path.replace('/', '\\')
+                        full_path = os.path.join(base_dir, win_path)
+                        os.makedirs(full_path, exist_ok=True)
+                        print(f"Created directory: {full_path}")
+                    
+                    # Create all files
+                    for file_path in files_to_create:
+                        # Convert to Windows path
+                        win_path = file_path.replace('/', '\\')
+                        full_path = os.path.join(base_dir, win_path)
+                        # Ensure the directory exists
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        # Create empty file
+                        with open(full_path, 'w') as f:
+                            pass
+                        print(f"Created file: {full_path}")
+                
+                # Check what files were created
+                created_files = []
+                for root, dirs, files in os.walk(base_dir):
+                    rel_root = os.path.relpath(root, base_dir)
+                    if rel_root == '.':
+                        rel_root = ''
+                    for file in files:
+                        if file != os.path.basename(script_path):
+                            rel_path = os.path.join(rel_root, file).replace('\\', '/')
+                            created_files.append(rel_path)
+                
+                print(f"Created {len(created_files)} files")
+                for file in created_files[:5]:
+                    print(f" - {file}")
+                if len(created_files) > 5:
+                    print(f" - ... and {len(created_files) - 5} more files")
+                
+                print("✅ Project structure created successfully using Python fallback")
+                return True
+        else:  # Unix-like
+            # Make the script executable
+            os.chmod(script_path, 0o755)
+            
+            print(f"Running script with working directory: {project_dir_abs}")
+            print(f"Script path: {script_path_abs}")
+            
+            # Execute the script directly in the PROJECT_DIR
+            result = subprocess.run(
+                [os.path.abspath(script_path)],
+                cwd=project_dir_abs,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            # Print output for debugging
+            if result.stdout:
+                print("Script output:")
+                print(result.stdout)
+            
+            print("✅ Project structure created successfully")
+            return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to execute structure script: {str(e)}")
+        if hasattr(e, 'stdout') and e.stdout:
+            print("Script stdout:")
+            print(e.stdout)
+        if hasattr(e, 'stderr') and e.stderr:
+            print("Script stderr:")
+            print(e.stderr)
+        return False
     except Exception as e:
         print(f"❌ Error during script execution: {str(e)}")
         import traceback
@@ -1275,28 +1230,6 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     # Initialize the orchestrator
     orchestrator = AIOrchestrator(model_name)
     
-    # Check if dependency tracking is available
-    DEPENDENCY_TRACKING_AVAILABLE = False
-    try:
-        from dependency_integration import initialize_dependency_tracking, restore_original_functions, perform_final_dependency_check
-        DEPENDENCY_TRACKING_AVAILABLE = True
-        print("Dependency tracking module found.")
-    except ImportError:
-        print("Dependency tracking module not found. Will not track dependencies.")
-    
-    # Initialize dependency tracking if available
-    dependency_resolver = None
-    if DEPENDENCY_TRACKING_AVAILABLE:
-        print("Initializing dependency tracking system...")
-        try:
-            # Initialize dependency tracking with the current module and project directory
-            import sys
-            dependency_resolver = initialize_dependency_tracking(sys.modules[__name__], PROJECT_DIR)
-            print("✅ Dependency tracking initialized")
-        except Exception as e:
-            print(f"❌ Error initializing dependency tracking: {e}")
-            DEPENDENCY_TRACKING_AVAILABLE = False
-    
     # Create a map of all files created
     file_map = {}
     
@@ -1305,19 +1238,8 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     
     # Store outputs from each step
     step_outputs = {}
-    # Vision has its own special key - ensure it's never None
-    step_outputs['vision'] = vision if vision is not None else "(No vision provided)"
-    
-    # Get project ID from the status file
-    project_id = None
-    status_path = os.path.join(PROJECT_DIR, "status.json")
-    if os.path.exists(status_path):
-        try:
-            with open(status_path, 'r') as f:
-                status_data = json.load(f)
-                project_id = status_data.get("project_id")
-        except Exception as e:
-            print(f"Warning: Could not read project ID from status file: {e}")
+    # Vision is always step 0
+    step_outputs[0] = vision
     
     # Store outputs from each sub-step
     sub_step_outputs = {}
@@ -1337,28 +1259,6 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     
     # Execute steps in sequence
     for i, step in enumerate(BUILDER_STEPS, start=1):
-        # Check for stop signal
-        if project_id and os.environ.get(f"STOP_BUILD_{project_id}", "false").lower() == "true":
-            print(f"\n=== STOP SIGNAL DETECTED ===")
-            print(f"Stopping project build at step {i}")
-            # Update status if it exists
-            if os.path.exists(status_path):
-                try:
-                    with open(status_path, 'r') as f:
-                        status_data = json.load(f)
-                    
-                    status_data["status"] = "stopped"
-                    status_data.setdefault("progress_updates", []).append({
-                        "time": datetime.datetime.utcnow().isoformat(),
-                        "message": f"Project build stopped at step {i}"
-                    })
-                    
-                    with open(status_path, 'w') as f:
-                        json.dump(status_data, f, indent=2)
-                except Exception as e:
-                    print(f"Error updating status file: {e}")
-            return
-            
         # Skip steps before the start_step
         if i < start_step:
             print(f"Skipping step {i} ({step['phase_name']})...")
@@ -1381,32 +1281,8 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                 # Generate the bash script
                 script_path = os.path.join(PROJECT_DIR, "setup_project_structure.sh")
                 if generate_structure_script(structure_content, script_path, orchestrator, model_name):
-                    # Verify the script has content and is valid
-                    if os.path.exists(script_path) and os.path.getsize(script_path) > 100:
-                        # Check if the script contains essential bash commands (mkdir, touch)
-                        with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            script_content = f.read()
-                            if 'mkdir' in script_content and ('touch' in script_content or 'echo' in script_content):
-                                print("✅ Implementation plan and structure script generated and verified")
-                                step_outputs[i] = f"Generated setup_project_structure.sh script based on project structure"
-                                
-                                # EXECUTE THE SCRIPT IMMEDIATELY AFTER GENERATION
-                                print("\n=== Setting up Project Structure ===")
-                                execute_structure_script(script_path)
-                            else:
-                                print("❌ Generated script is missing essential commands (mkdir/touch). Please retry step 4.")
-                                # Remove the invalid script
-                                try:
-                                    os.remove(script_path)
-                                except Exception as e:
-                                    print(f"Warning: Could not remove invalid script: {e}")
-                                return
-                    else:
-                        print("❌ Generated script is empty or too small. Please retry step 4.")
-                        return
-                else:
-                    print("❌ Failed to generate structure script. Please retry step 4.")
-                    return
+                    print("✅ Implementation plan and structure script generated")
+                    step_outputs[i] = f"Generated setup_project_structure.sh script based on project structure"
                 
             elif i == 5:  # File Implementation
                 print("\n=== Setting up Project Structure ===")
@@ -1417,28 +1293,7 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                     print("Error: setup_project_structure.sh not found. Please run step 4 first.")
                     return
                 
-                # Verify the script has content before attempting to execute it
-                if os.path.getsize(script_path) < 100:
-                    print("Error: setup_project_structure.sh is empty or too small. Please run step. 4 again")
-                    return
-                
-                # Additional verification of script content
-                with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    script_content = f.read()
-                    if not ('mkdir' in script_content and ('touch' in script_content or 'echo' in script_content)):
-                        print("Error: setup_project_structure.sh doesn't contain required commands. Please run step 4 again.")
-                        return
-                
-                # Count existing files before execution for better verification
-                existing_files_count = 0
-                for root, dirs, files in os.walk(PROJECT_DIR):
-                    existing_files_count += len(files)
-                print(f"Before script execution: {existing_files_count} files exist in project directory")
-                
                 if execute_structure_script(script_path):
-                    # Script executed successfully - we know files were created based on previous step output
-                    print(f"✅ Project structure successfully created")
-                    
                     # Discover all files that need implementation
                     all_files = discover_all_files(PROJECT_DIR)
                     print(f"Discovered {len(all_files)} files that need implementation")
@@ -1520,7 +1375,7 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                 You are tasked with creating a comprehensive README.md file for the project based on:
                 
                 1. Project Vision:
-                {step_outputs.get('vision', '(No vision provided)')}
+                {step_outputs.get(0, '(No vision provided)')}
                 
                 2. Project Structure:
                 {structure_content[:2000] if structure_content else '(No structure provided)'}
@@ -1568,31 +1423,9 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
             sub_step_id = ALPHA[j]
             sub_step_key = f"{i}{sub_step_id}"
             
-            # Check for stop signal
-            if project_id and os.environ.get(f"STOP_BUILD_{project_id}", "false").lower() == "true":
-                print(f"\n=== STOP SIGNAL DETECTED ===")
-                print(f"Stopping project build at step {i}, substep {sub_step_id}")
-                # Update status if it exists
-                if os.path.exists(status_path):
-                    try:
-                        with open(status_path, 'r') as f:
-                            status_data = json.load(f)
-                        
-                        status_data["status"] = "stopped"
-                        status_data.setdefault("progress_updates", []).append({
-                            "time": datetime.datetime.utcnow().isoformat(),
-                            "message": f"Project build stopped at step {i}, substep {sub_step_id}"
-                        })
-                        
-                        with open(status_path, 'w') as f:
-                            json.dump(status_data, f, indent=2)
-                    except Exception as e:
-                        print(f"Error updating status file: {e}")
-                return
-            
             # Skip sub-steps before the start_substep if this is the start_step
             if i == start_step and start_substep and sub_step_id < start_substep:
-                print(f"Skipping substep {sub_step_id}: {sub_step.name} (before requested start point)")
+                print(f"Skipping sub-step {i}{sub_step_id} ({sub_step.name})...")
                 continue
                 
             print(f"\n--- Step {i}{sub_step_id}: {sub_step.name} ---")
@@ -1622,68 +1455,17 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
                 with open(structure_doc_path, 'r', encoding='utf-8') as f:
                     structure_content = f.read()
     
-    # After file implementation, perform a final dependency check if enabled
-    if DEPENDENCY_TRACKING_AVAILABLE and dependency_resolver and using_generated_structure:
-        try:
-            print("\n=== Performing Final Dependency Check ===")
-            # Create a current file map
-            current_file_map = {}
-            for root, _, files in os.walk(PROJECT_DIR):
-                for file in files:
-                    if file.endswith(('.py', '.js', '.jsx', '.ts', '.tsx')):
-                        file_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(file_path, PROJECT_DIR)
-                        try:
-                            with open(file_path, 'r', encoding='utf-8') as f:
-                                current_file_map[rel_path] = ProjectFile(rel_path, f.read())
-                        except Exception as e:
-                            print(f"Error reading {rel_path}: {e}")
-            
-            # Perform the dependency check and fixing
-            perform_final_dependency_check(PROJECT_DIR, orchestrator, model_name)
-            
-            # Restore original functions
-            if 'restore_original_functions' in globals():
-                restore_original_functions(sys.modules[__name__])
-                print("Restored original project builder functions")
-        except Exception as e:
-            print(f"Error during dependency check: {e}")
-
     # Store all step outputs in a summary file
     output_summary = "# Project Generation Summary\n\n"
     for i, output in step_outputs.items():
-        # Convert i to integer if it's a string (keys might be strings from JSON)
-        step_index = int(i) if isinstance(i, str) else i
-        
-        if step_index == 0:
+        if i == 0:
             output_summary += f"## Vision\n{output}\n\n"
         else:
-            step_name = BUILDER_STEPS[step_index-1].get('phase_name', f"Step {step_index}") if step_index-1 < len(BUILDER_STEPS) else f"Step {step_index}"
+            step_name = BUILDER_STEPS[i-1].get('phase_name', f"Step {i}") if i-1 < len(BUILDER_STEPS) else f"Step {i}"
             output_summary += f"## {step_name}\n{output}\n\n"
     
     with open(os.path.join(PROJECT_DIR, "doc", "SUMMARY.md"), "w", encoding="utf-8") as f:
         f.write(output_summary)
-    
-    # Create individual step summary files
-    for i, output in step_outputs.items():
-        # Convert i to integer if it's a string
-        step_index = int(i) if isinstance(i, str) else i
-        
-        if step_index == 1:
-            step1_file = os.path.join(PROJECT_DIR, "doc", "01_context_constraints.md")
-            print(f"Creating Step 1 summary file: {step1_file}")
-            with open(step1_file, "w", encoding="utf-8") as f:
-                f.write(f"# Context and Constraints\n\n{output}")
-        elif step_index == 2:
-            step2_file = os.path.join(PROJECT_DIR, "doc", "02_system_architecture.md")
-            print(f"Creating Step 2 summary file: {step2_file}")
-            with open(step2_file, "w", encoding="utf-8") as f:
-                f.write(f"# System Architecture\n\n{output}")
-        elif step_index == 3:
-            step3_file = os.path.join(PROJECT_DIR, "doc", "03_project_structure.md")
-            print(f"Creating Step 3 summary file: {step3_file}")
-            with open(step3_file, "w", encoding="utf-8") as f:
-                f.write(f"# Project Structure\n\n{output}")
     
     # Implement files if we haven't already and we're not using the generated structure
     if not using_generated_structure and start_step >= 5:
@@ -1772,14 +1554,6 @@ def run_project_builder(vision: str, model_name: str, start_step: int = 1, start
     print(f"\n=== Project Build Complete ===")
     print(f"Your project has been generated in the '{PROJECT_DIR}' directory.")
     print("You can find documentation in the 'doc' subdirectory.")
-    
-    # Create a flag file to indicate the project is complete
-    flag_file = os.path.join(PROJECT_DIR, "doc", "project_complete.flag")
-    with open(flag_file, 'w') as f:
-        f.write(f"Project completed at {datetime.datetime.now().isoformat()}")
-    
-    print("\n✅ Project build complete!")
-    return
 
 def implement_single_file(file_path: str, structure_content: str, step_outputs: Dict[int, str], 
                           orchestrator: AIOrchestrator, model_name: str, file_map: Dict[str, ProjectFile]) -> bool:
@@ -1828,7 +1602,7 @@ actually be used in a production environment. Your code will be saved directly t
 and is expected to work without modification.
 
 ## Project Context
-{step_outputs.get('vision', '(No vision provided)')}
+{step_outputs.get(0, '(No vision provided)')}
 
 ## Project Structure
 The file is part of the following project structure:

@@ -108,8 +108,30 @@ def parse_ai_response_and_apply(ai_text: str, file_map: Dict[str, ProjectFile]):
             if normalized_path not in file_map:
                 # Create a new entry if it doesn't exist
                 file_map[normalized_path] = ProjectFile(normalized_path, "")
-            file_map[normalized_path].content = "\n".join(content_buffer)
-            print(f"DEBUG: Processed file {normalized_path} with {len(content_buffer)} lines")
+            
+            # Join content buffer to get the full content
+            content = "\n".join(content_buffer)
+            
+            # Safe handling of markdown code blocks without breaking docstrings
+            # Only fix the very specific case where the entire file is wrapped in backticks
+            is_markdown_block = False
+            
+            # Check if file begins with ```python or ```js or just ``` and ends with ```
+            if content.lstrip().startswith("```") and content.rstrip().endswith("```"):
+                lines = content.splitlines()
+                if len(lines) >= 2:
+                    first_line = lines[0].strip()
+                    last_line = lines[-1].strip()
+                    
+                    # Check if first line is a markdown code block marker and last line is ```
+                    if first_line.startswith("```") and last_line == "```":
+                        # Only remove first and last line, keeping everything else
+                        content = "\n".join(lines[1:-1])
+                        is_markdown_block = True
+                        print(f"DEBUG: Removed markdown code block markers from {normalized_path}")
+            
+            file_map[normalized_path].content = content
+            print(f"DEBUG: Processed file {normalized_path} with {len(content_buffer)} lines{' (fixed markdown formatting)' if is_markdown_block else ''}")
             files_found += 1
 
     for line in lines:
@@ -131,4 +153,46 @@ def parse_ai_response_and_apply(ai_text: str, file_map: Dict[str, ProjectFile]):
     
     if files_found == 0:
         print("Warning: No file markers found in AI response. This may indicate formatting issues.")
-        print("AI response excerpt (first 200 chars):", ai_text[:200] + "..." if len(ai_text) > 200 else ai_text) 
+        print("AI response excerpt (first 200 chars):", ai_text[:200] + "..." if len(ai_text) > 200 else ai_text)
+        
+        # Fallback: If no file markers found, but we know which file to implement
+        # Check if file_map has one entry that might need updating
+        if len(file_map) == 1:
+            # There's only one file in the map - use this as the target
+            file_path = next(iter(file_map))
+            print(f"Fallback: Using direct content for {file_path} without file markers")
+            
+            # Clean up the content - remove markdown formatting
+            content = ai_text
+            # Check if content is wrapped in code blocks
+            if content.lstrip().startswith("```") and content.rstrip().endswith("```"):
+                lines = content.splitlines()
+                if len(lines) >= 2:
+                    # Remove the first and last lines if they are backtick markers
+                    if lines[0].strip().startswith("```") and lines[-1].strip() == "```":
+                        content = "\n".join(lines[1:-1])
+                        print(f"Removed markdown code block markers in fallback mode")
+            
+            # Update the file content
+            file_map[file_path].content = content
+            print(f"Applied fallback content to {file_path} with {len(content.splitlines())} lines")
+        elif len(file_map) > 1:
+            print("Cannot apply fallback: Multiple files in file_map and no file markers in response")
+        else:
+            print("Cannot apply fallback: No files in file_map and no file markers in response")
+
+    # Additional safety pass - scan all files for markdown artifacts
+    for file_path, pf in file_map.items():
+        # Skip non-code files and empty files
+        if not pf.content.strip():
+            continue
+            
+        # Check if the file still has markdown artifacts at the beginning or end
+        content = pf.content
+        lines = content.splitlines()
+        
+        # If the first line starts with ``` and the last line is just ```, remove them
+        if len(lines) >= 2 and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
+            fixed_content = "\n".join(lines[1:-1])
+            print(f"Fixed markdown artifacts in {file_path}")
+            pf.content = fixed_content 
